@@ -8,4 +8,25 @@ Le schéma de la structure pour le moment ressemblera a ça
 
 [Création de VM]
 
-https://shadowlicium.github.io/Laser-formation/
+https://github.com/Shadowlicium/Laser-formation/issues/new?template=deploy.yml
+
+Nécessite : 
+
+Clé gpg publique : 
+
+```
+gpg --full-generate-key
+
+gpg --list-keys
+
+exemple
+
+pub   rsa4096 2025-10-28 [SC] [expires: 2027-10-28]
+      1234ABCD5678EF90AABBCCDDEEFF001122334455
+uid           [ultimate] Shadowlicium <shadow@example.com>
+sub   rsa4096 2025-10-28 [E]
+
+gpg --armor --export shadowlicium > public.asc
+
+On copie ensuite tout le contenu de public.asc et on le transmet dans le formulaire de demande
+```
