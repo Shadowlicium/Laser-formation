@@ -16,6 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # (Optionnel) Exécuter seulement si le label 'deploy-request' est présent
+      # - name: Guard (require deploy-request label)
+      #   run: |
+      #     echo '${{ toJson(github.event.issue.labels.*.name) }}' | grep -wq 'deploy-request' \
+      #     || { echo "No 'deploy-request' label → exit."; exit 0; }
+
       - name: Install deps (jq, gpg)
         run: sudo apt-get update && sudo apt-get install -y jq gnupg
 
@@ -27,11 +33,9 @@ jobs:
         id: parse
         run: |
           BODY='${{ github.event.issue.body }}'
-          # Normaliser les retours Windows -> Unix
-          BODY=$(printf "%s" "$BODY" | sed 's/\r$//')
+          BODY=$(printf "%s" "$BODY" | sed 's/\r$//')  # normaliser CRLF
 
           get_field_prefix () {
-            # $1 = préfixe du titre, ex: "Nom de la machine" ou "Clé PGP publique"
             awk -v pref="$1" '
               $0 ~ "^### " pref {flag=1; next}
               /^### / && flag {flag=0}
@@ -97,11 +101,16 @@ jobs:
         working-directory: infra/tofu
         env:
           PVE_API_URL:      ${{ secrets.PVE_API_URL }}
-          PVE_API_TOKEN:    ${{ secrets.PVE_TOKEN_ID }}       # format complet: user@realm!token=uuid
-          PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
+          PVE_TOKEN_ID:     ${{ secrets.PVE_TOKEN_ID }}      # 🚨 ce secret doit contenir le token COMPLET: user@realm!token=uuid
+          PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}  # true/false
         run: |
           set -euo pipefail
-          # Normaliser bool
+
+          # Garde-fous
+          [ -n "${PVE_API_URL:-}" ]  || { echo "PVE_API_URL vide"; exit 1; }
+          [ -n "${PVE_TOKEN_ID:-}" ] || { echo "PVE_TOKEN_ID vide"; exit 1; }
+
+          # Normaliser bool → true/false strict
           case "${PVE_TLS_INSECURE:-}" in
             1|true|TRUE|True|yes|YES) INSECURE=true ;;
             0|false|FALSE|False|no|NO|"") INSECURE=false ;;
@@ -110,21 +119,25 @@ jobs:
 
           tofu init
           USERS_JSON=$(jq -n --arg u "${{ steps.parse.outputs.NOM }}" '[ $u ]')
+
           tofu apply -auto-approve \
             -var "users=${USERS_JSON}" \
             -var "ssh_pub_key=${{ steps.ssh.outputs.PUB }}" \
             -var "pve_api_url=${PVE_API_URL}" \
-            -var "pve_token_id=${PVE_API_TOKEN}" \
+            -var "pve_token_id=${PVE_TOKEN_ID}" \
             -var "pve_tls_insecure=${INSECURE}"
 
-      - name: Capture VM outputs (optional)
+      - name: Capture VM outputs
         id: vmout
         working-directory: infra/tofu
         run: |
-          tofu output -json vms > /tmp/vm_info.json
-          echo "VM_JSON<<EOF" >> $GITHUB_OUTPUT
-          cat /tmp/vm_info.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          if tofu output -json vms > /tmp/vm_info.json 2>/dev/null; then
+            echo "VM_JSON<<EOF" >> $GITHUB_OUTPUT
+            cat /tmp/vm_info.json >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "VM_JSON={}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Load armored key content for comment
         id: load
@@ -142,7 +155,7 @@ jobs:
             ✅ **VM créée pour** `${{ steps.parse.outputs.NOM }}`
             **Infos VM (outputs)** :
             ```json
-            ${{ steps.vmout.outputs.VM_JSON || '{}' }}
+            ${{ steps.vmout.outputs.VM_JSON }}
             ```
 
             **Clé privée SSH chiffrée (PGP)** — copie ce bloc dans `id_ed25519.asc` puis déchiffre-la :
@@ -154,7 +167,7 @@ jobs:
             ```bash
             gpg --decrypt id_ed25519.asc > id_ed25519
             chmod 600 id_ed25519
-            ssh -i ./id_ed25519 debian@<IP_de_ta_VM>
+            ssh -i ./id_ed25519 nono@<IP_de_ta_VM>
             ```
 
       - name: Cleanup sensitive files
