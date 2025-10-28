@@ -7,7 +7,7 @@ on:
 jobs:
   dispatch-from-issue:
     if: contains(github.event.issue.labels.*.name, 'deploy-request')
-    runs-on: debian-latest
+    runs-on: unbuntu-latest
     steps:
       - name: Extraire champs du formulaire
         id: parse
