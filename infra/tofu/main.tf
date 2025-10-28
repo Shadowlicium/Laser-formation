@@ -15,40 +15,71 @@ provider "proxmox" {
   insecure  = var.pve_tls_insecure                 # false si cert public; true si cert interne
 }
 
-# Une VM Debian par utilisateur (nom = "<prefix>-<user>"), VMID auto (on omet vm_id)
+# Une VM Debian par utilisateur (nom = "<prefix>-<user>"), VMID auto (on n'indique pas vm_id)
 resource "proxmox_virtual_environment_vm" "debian_user" {
   for_each  = toset(var.users)
 
   node_name = var.pve_node_name
   name      = "${var.vm_prefix}-${each.value}"
 
-  # Ajuste si besoin
-  cores  = var.cores
-  memory = var.memory
+  # Type d'OS invité
+  operating_system {
+    type = "l26"   # Linux 2.6+ (générique)
+  }
 
-  # Disque principal (datastore sur NAS ou local-lvm)
+  cpu {
+    sockets = 1
+    cores   = var.cores
+    type    = "x86-64-v2-AES"  # optionnel
+  }
+
+  memory {
+    dedicated = var.memory      # MiB
+  }
+
+  # Disque principal (datastore NFS/iSCSI ou local-lvm)
   disk {
     datastore_id = var.datastore_id
-    size         = var.disk_size_gb               # en Go
-    interface    = "virtio0"
+    interface    = "scsi0"      # "virtio0" possible aussi
+    size         = var.disk_size_gb
     iothread     = true
   }
 
-  # Réseau (si nécessaire selon ta config Proxmox)
-  # network_device {
-  #   bridge = var.net_bridge
-  #   model  = "virtio"
+  # Réseau
+  network_device {
+    bridge = var.net_bridge
+    model  = "virtio"
+  }
+
+  # clone {
+  #   vm_id = 9000   # <-- VMID du template cloud-init Debian si tu en as un
+  #   full  = true
   # }
 
-  # Cloud-init : injecte la clé publique générée par le workflow
+  # Initialisation (cloud-init)
   initialization {
-    hostname = "${var.vm_prefix}-${each.value}"
     user_account {
-      username             = "debian"
-      ssh_authorized_keys  = [ file(var.ssh_pub_key) ]  # <-- le workflow passe un CHEMIN vers la clé publique
+      username = "debian"
+      # IMPORTANT: dans le provider BPG, c'est "keys" (liste de clés publiques)
+      keys     = [ file(var.ssh_pub_key) ]   # le workflow passe un CHEMIN vers la clé .pub
     }
-    datasource = "NoCloud"
+
+    # DHCP par défaut
+    ip_config {
+      ipv4 {
+        address = "dhcp"
+      }
+    }
   }
 
   tags = ["generated","debian","users"]
+}
+
+# Sorties utiles
+output "vms" {
+  description = "Nom et VMID assignés par Proxmox"
+  value = {
+    for u, r in proxmox_virtual_environment_vm.debian_user :
+    u => { name = r.name, vmid = r.vm_id }
+  }
 }
