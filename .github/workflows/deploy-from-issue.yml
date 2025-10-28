@@ -32,10 +32,10 @@ jobs:
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: "1.7.0"
+        with: { tofu_version: "1.7.0" }
 
       - name: Tofu init + apply
+        working-directory: infra/tofu              # <--- ICI
         env:
           PVE_API_URL:      ${{ secrets.PVE_API_URL }}
           PVE_TOKEN_ID:     ${{ secrets.PVE_TOKEN_ID }}
@@ -44,9 +44,6 @@ jobs:
         run: |
           tofu init
           USERS_JSON=$(jq -n --arg u "${{ inputs.nom_machine }}" '[ $u ]')
-          # ⚠️ IMPORTANT :
-          # - var "ssh_pub_key" doit être le CHEMIN vers la clé publique
-          #   si ton code Terraform fait: file(var.ssh_pub_key) pour ssh_authorized_keys.
           tofu apply -auto-approve \
             -var "users=${USERS_JSON}" \
             -var "ssh_pub_key=${{ steps.ssh.outputs.PUB_PATH }}" \
