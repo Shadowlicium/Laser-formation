@@ -68,19 +68,17 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
     ip_config {
       ipv4 {
         address = "dhcp"
-        }
-      locals {
-        pve_tls_insecure_bool = lower(var.pve_tls_insecure) == "true"
-        }
-
-      provider "proxmox" {
-        endpoint  = var.pve_api_url
-        api_token = "${var.pve_token_id}=${var.pve_token_secret}"
-        insecure  = local.pve_tls_insecure_bool
       }
-
     }
   }
+locals {
+  pve_tls_insecure_bool = lower(var.pve_tls_insecure) == "true"
+}
 
+provider "proxmox" {
+  endpoint  = var.pve_api_url
+  api_token = "${var.pve_token_id}=${var.pve_token_secret}"
+  insecure  = local.pve_tls_insecure_bool
+  }
   tags = ["generated","debian","users"]
 }
