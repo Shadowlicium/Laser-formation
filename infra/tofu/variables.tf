@@ -27,13 +27,13 @@ variable "pve_tls_insecure" {
 
 variable "pve_node_name" {
   type    = string
-  default = "pve-node1"
+  default = "evp"
 }
 
 # Stockage / réseau / sizing
 variable "datastore_id" {
   type    = string
-  default = "local-lvm"
+  default = "local-zfs"
 }
 
 variable "net_bridge" {
