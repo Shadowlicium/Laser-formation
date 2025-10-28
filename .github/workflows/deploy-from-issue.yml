@@ -97,6 +97,11 @@ jobs:
           PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
         run: |
           tofu init
+          case "${PVE_TLS_INSECURE}" in
+            1|true|TRUE|True|yes|YES) INSECURE=true ;;
+            0|false|FALSE|False|no|NO|"") INSECURE=false ;;
+            *) echo "Valeur PVE_TLS_INSECURE invalide: '${PVE_TLS_INSECURE}'"; exit 1 ;;
+          esac
           USERS_JSON=$(jq -n --arg u "${{ steps.parse.outputs.NOM }}" '[ $u ]')
           tofu apply -auto-approve \
             -var "users=${USERS_JSON}" \
@@ -104,7 +109,7 @@ jobs:
             -var "pve_api_url=${PVE_API_URL}" \
             -var "pve_token_id=${PVE_TOKEN_ID}" \
             -var "pve_token_secret=${PVE_TOKEN_SECRET}}" \
-            -var "pve_tls_insecure=${PVE_TLS_INSECURE}"
+            -var "pve_tls_insecure=${INSECURE}"
 
       - name: Export outputs (VM info)
         working-directory: infra/tofu

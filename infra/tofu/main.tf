@@ -63,22 +63,11 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
       # IMPORTANT: dans le provider BPG, c'est "keys" (liste de clés publiques)
       keys     = [ file(var.ssh_pub_key) ]   # le workflow passe un CHEMIN vers la clé .pub
     }
-
-    # DHCP par défaut
     ip_config {
       ipv4 {
         address = "dhcp"
-      }
     }
   }
-locals {
-  pve_tls_insecure_bool = lower(var.pve_tls_insecure) == "true"
 }
-
-provider "proxmox" {
-  endpoint  = var.pve_api_url
-  api_token = "${var.pve_token_id}=${var.pve_token_secret}"
-  insecure  = local.pve_tls_insecure_bool
-  }
   tags = ["generated","debian","users"]
 }

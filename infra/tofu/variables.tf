@@ -25,8 +25,8 @@ variable "pve_token_secret" {
 }
 
 variable "pve_tls_insecure" {
-  type    = string
-  default = "true"
+  type    = bool
+  default = true
 }
 
 variable "pve_node_name" {
