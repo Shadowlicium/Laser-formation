@@ -33,7 +33,7 @@ variable "pve_node_name" {
 # Stockage / réseau / sizing
 variable "datastore_id" {
   type    = string
-  default = "local-zfs"
+  default = "omv-nfs"
 }
 
 variable "net_bridge" {
