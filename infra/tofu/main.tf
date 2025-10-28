@@ -60,7 +60,8 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
   initialization {
     datastore_id = var.datastore_id
     user_account {
-      username = "debian"
+      username = "nono"
+      password = var.user_password
       # IMPORTANT: dans le provider BPG, c'est "keys" (liste de clés publiques)
       keys     = [ file(var.ssh_pub_key) ]   # le workflow passe un CHEMIN vers la clé .pub
     }
