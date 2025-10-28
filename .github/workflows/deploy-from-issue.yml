@@ -97,7 +97,7 @@ jobs:
         working-directory: infra/tofu
         env:
           PVE_API_URL:      ${{ secrets.PVE_API_URL }}
-          PVE_API_TOKEN:    ${{ secrets.PVE_API_TOKEN }}       # format complet: user@realm!token=uuid
+          PVE_API_TOKEN:    ${{ secrets.PVE_TOKEN_ID }}       # format complet: user@realm!token=uuid
           PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
         run: |
           set -euo pipefail
