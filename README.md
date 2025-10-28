@@ -10,9 +10,7 @@ Le schéma de la structure pour le moment ressemblera a ça
 
 https://github.com/Shadowlicium/Laser-formation/issues/new?template=deploy.yml
 
-Nécessite : 
-
-Clé gpg publique : 
+Nécessite la Clé gpg publique : 
 
 ```
 gpg --full-generate-key
@@ -30,3 +28,4 @@ gpg --armor --export shadowlicium > public.asc
 
 On copie ensuite tout le contenu de public.asc et on le transmet dans le formulaire de demande
 ```
+Il faudra ensuite attendre quelques minutes puis actualiser la page pour voir le liens a la VM demander
