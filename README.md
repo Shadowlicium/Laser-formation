@@ -6,4 +6,6 @@ le Stockage sera persistant car la machine sera supprimé après la fin d'utilis
 
 Le schéma de la structure pour le moment ressemblera a ça 
 
-[Utilisateur
+[Création de VM]
+
+https://github.com/shadowlicium/laser-formation/issues/new?template=deploy.yml
