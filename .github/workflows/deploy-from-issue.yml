@@ -1,4 +1,4 @@
-name: Deploy VM from Issue (PGP → comment)
+name: Deploy VM from Issue
 
 on:
   issues:
@@ -24,17 +24,10 @@ jobs:
         run: |
           BODY=$(jq -r '.issue.body' <<< '${{ toJson(github.event) }}')
 
-          # Récupérer les sections du Issue Form
-          get_field () {
-            awk -v title="$1" '
-              $0 ~ "^### "title"$" {flag=1; next}
-              /^### / && flag {flag=0}
-              flag
-            ' <<< "$BODY" | tr -d '\r'
-          }
-
-          NOM="$(get_field 'Nom de la machine' | xargs)"
-          PGP="$(get_field 'Clé PGP publique')"
+          # Récupération "Nom de la machine"
+          NOM=$(awk '/^### Nom de la machine/{flag=1;next}/^###/{flag=0}flag' <<< "$BODY" | tr -d '\r' | xargs)
+          # Récupération "Clé PGP publique"
+          PGP=$(awk '/^### Clé PGP publique/{flag=1;next}/^###/{flag=0}flag' <<< "$BODY" | sed 's/\r$//' )
 
           echo "NOM=$NOM" >> $GITHUB_OUTPUT
           echo "PGP<<EOF"  >> $GITHUB_OUTPUT
@@ -57,27 +50,21 @@ jobs:
           ssh-keygen -t ed25519 -f /tmp/keys/${{ steps.parse.outputs.NOM }} -N "" -C "${{ steps.parse.outputs.NOM }}@laser"
           echo "PUB=/tmp/keys/${{ steps.parse.outputs.NOM }}.pub"  >> $GITHUB_OUTPUT
           echo "PRIV=/tmp/keys/${{ steps.parse.outputs.NOM }}"      >> $GITHUB_OUTPUT
-          echo "Clé publique:"
-          cat /tmp/keys/${{ steps.parse.outputs.NOM }}.pub
 
-      - name: Import PGP and encrypt SSH private (non-interactive, armored)
+      - name: Import PGP public key & encrypt SSH private key
         id: pgp
-        env:
-          NOM:  ${{ steps.parse.outputs.NOM }}
-          PRIV: ${{ steps.ssh.outputs.PRIV }}
         run: |
-          set -euo pipefail
           echo "${{ steps.parse.outputs.PGP }}" > /tmp/client_pub.asc
-          gpg --batch --yes --import /tmp/client_pub.asc
-          FPR=$(gpg --with-colons --import-options show-only --import /tmp/client_pub.asc | awk -F: '/^fpr:/ {print $10; exit}')
-          [[ -n "$FPR" && "$FPR" =~ ^[0-9A-F]{40}$ ]] || { echo "Fingerprint PGP invalide"; exit 1; }
-          echo "$FPR:6:" | gpg --batch --yes --import-ownertrust
-          gpg --batch --yes --trust-model always --pinentry-mode loopback \
-              --recipient "$FPR" \
-              --armor \
-              --output "/tmp/${NOM}.key.asc" \
-              --encrypt "$PRIV"
-          echo "ARMOR=/tmp/${NOM}.key.asc" >> $GITHUB_OUTPUT
+          gpg --import /tmp/client_pub.asc
+          # Récupérer un identifiant destinataire (email/uid) automatiquement :
+          RECIP=$(gpg --with-colons --import-options show-only --import /tmp/client_pub.asc 2>/dev/null | awk -F: '/^uid:/ {print $10; exit}')
+          if [ -z "$RECIP" ]; then
+            echo "Impossible de déterminer le destinataire PGP."; exit 1
+          fi
+          gpg --yes --output /tmp/${{ steps.parse.outputs.NOM }}.key.gpg \
+              --encrypt --recipient "$RECIP" \
+              "${{ steps.ssh.outputs.PRIV }}"
+          echo "GPG=/tmp/${{ steps.parse.outputs.NOM }}.key.gpg" >> $GITHUB_OUTPUT
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -88,65 +75,51 @@ jobs:
         working-directory: infra/tofu
         env:
           PVE_API_URL:      ${{ secrets.PVE_API_URL }}
-          PVE_API_TOKEN:    ${{ secrets.PVE_API_TOKEN }}       # format complet: user@realm!token=uuid
+          PVE_TOKEN_ID:     ${{ secrets.PVE_TOKEN_ID }}
+          PVE_TOKEN_SECRET: ${{ secrets.PVE_TOKEN_SECRET }}
           PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
         run: |
-          set -euo pipefail
-          # Normaliser bool
-          case "${PVE_TLS_INSECURE:-}" in
-            1|true|TRUE|True|yes|YES) INSECURE=true ;;
-            0|false|FALSE|False|no|NO|"") INSECURE=false ;;
-            *) echo "PVE_TLS_INSECURE invalide: '${PVE_TLS_INSECURE}'"; exit 1 ;;
-          esac
-
           tofu init
           USERS_JSON=$(jq -n --arg u "${{ steps.parse.outputs.NOM }}" '[ $u ]')
           tofu apply -auto-approve \
             -var "users=${USERS_JSON}" \
             -var "ssh_pub_key=${{ steps.ssh.outputs.PUB }}" \
             -var "pve_api_url=${PVE_API_URL}" \
-            -var "pve_token_id=${PVE_API_TOKEN}" \
-            -var "pve_tls_insecure=${INSECURE}"
+            -var "pve_token_id=${PVE_TOKEN_ID}" \
+            -var "pve_token_secret=${PVE_TOKEN_SECRET}}" \
+            -var "pve_tls_insecure=${PVE_TLS_INSECURE}"
 
-      - name: Capture VM outputs (optional)
-        id: vmout
+      - name: Export outputs (VM info)
         working-directory: infra/tofu
         run: |
           tofu output -json vms > /tmp/vm_info.json
-          echo "VM_JSON<<EOF" >> $GITHUB_OUTPUT
-          cat /tmp/vm_info.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          cat /tmp/vm_info.json
 
-      - name: Load armored key content for comment
-        id: load
-        run: |
-          ARMOR_CONTENT=$(sed -e 's/`/\\`/g' /tmp/${{ steps.parse.outputs.NOM }}.key.asc)
-          echo "ARMOR_CONTENT<<EOF" >> $GITHUB_OUTPUT
-          echo "$ARMOR_CONTENT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Upload artifacts (encrypted SSH private key + VM info)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm_${{ steps.parse.outputs.NOM }}_bundle
+          path: |
+            /tmp/vm_info.json
+            ${{ steps.pgp.outputs.GPG }}
 
-      - name: Comment the issue with encrypted key + VM info
+      - name: Comment the issue (instructions)
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            ✅ **VM créée pour** `${{ steps.parse.outputs.NOM }}`
-            **Infos VM (outputs)** :
-            ```json
-            ${{ steps.vmout.outputs.VM_JSON || '{}' }}
-            ```
-
-            **Clé privée SSH chiffrée (PGP)** — copie ce bloc dans `id_ed25519.asc` puis déchiffre-la :
-            ```text
-            ${{ steps.load.outputs.ARMOR_CONTENT }}
-            ```
-
-            **Déchiffrement :**
-            ```bash
-            gpg --decrypt id_ed25519.asc > id_ed25519
-            chmod 600 id_ed25519
-            ssh -i ./id_ed25519 debian@<IP_de_ta_VM>
-            ```
+            ✅ Déploiement lancé pour **${{ steps.parse.outputs.NOM }}**.
+            - Télécharge l’artefact **vm_${{ steps.parse.outputs.NOM }}_bundle**
+            - Déchiffre la clé privée SSH avec ta clé PGP :
+              ```bash
+              gpg --decrypt ${{ steps.parse.outputs.NOM }}.key.gpg > id_ed25519
+              chmod 600 id_ed25519
+              ```
+            - Connexion :
+              ```bash
+              ssh -i ./id_ed25519 debian@<IP_VM>
+              ```
+            (L’IP/noms sont dans `vm_info.json`)
 
       - name: Cleanup sensitive files
         if: always()
@@ -154,4 +127,3 @@ jobs:
           shred -u "${{ steps.ssh.outputs.PRIV }}" || true
           shred -u "${{ steps.ssh.outputs.PUB }}"  || true
           rm -f /tmp/client_pub.asc || true
-          rm -f /tmp/${{ steps.parse.outputs.NOM }}.key.asc || true
