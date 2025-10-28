@@ -11,7 +11,7 @@ terraform {
 # Provider Proxmox (API via reverse proxy ou direct)
 provider "proxmox" {
   endpoint  = var.pve_api_url                      # ex: https://api-proxmox.example.com/api2/json
-  api_token = "${var.pve_token_id}=${var.pve_token_secret}"
+  api_token = "${var.pve_token_id}"
   insecure  = var.pve_tls_insecure                 # false si cert public; true si cert interne
 }
 
