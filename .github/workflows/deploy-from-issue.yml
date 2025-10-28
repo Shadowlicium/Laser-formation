@@ -51,20 +51,37 @@ jobs:
           echo "PUB=/tmp/keys/${{ steps.parse.outputs.NOM }}.pub"  >> $GITHUB_OUTPUT
           echo "PRIV=/tmp/keys/${{ steps.parse.outputs.NOM }}"      >> $GITHUB_OUTPUT
 
-      - name: Import PGP public key & encrypt SSH private key
+      - name: Import PGP public key & encrypt SSH private key (non-interactive)
         id: pgp
+        env:
+          NOM:  ${{ steps.parse.outputs.NOM }}
+          PRIV: ${{ steps.ssh.outputs.PRIV }}
         run: |
+          set -euo pipefail
+
+          # 1) Importer la clé publique ASCII-armored fournie par l'Issue Form
           echo "${{ steps.parse.outputs.PGP }}" > /tmp/client_pub.asc
-          gpg --import /tmp/client_pub.asc
-          # Récupérer un identifiant destinataire (email/uid) automatiquement :
-          RECIP=$(gpg --with-colons --import-options show-only --import /tmp/client_pub.asc 2>/dev/null | awk -F: '/^uid:/ {print $10; exit}')
-          if [ -z "$RECIP" ]; then
-            echo "Impossible de déterminer le destinataire PGP."; exit 1
+          gpg --batch --yes --import /tmp/client_pub.asc
+
+          # 2) Récupérer le fingerprint (hex) de la clé importée
+          FPR=$(gpg --with-colons --import-options show-only --import /tmp/client_pub.asc \
+                 | awk -F: '/^fpr:/ {print $10; exit}')
+          if [ -z "$FPR" ]; then
+            echo "Impossible de récupérer le fingerprint PGP."; exit 1
           fi
-          gpg --yes --output /tmp/${{ steps.parse.outputs.NOM }}.key.gpg \
-              --encrypt --recipient "$RECIP" \
-              "${{ steps.ssh.outputs.PRIV }}"
-          echo "GPG=/tmp/${{ steps.parse.outputs.NOM }}.key.gpg" >> $GITHUB_OUTPUT
+          [[ "$FPR" =~ ^[0-9A-F]{40}$ ]] || { echo "Fingerprint invalide: $FPR"; exit 1; }
+          echo "Fingerprint: $FPR"
+
+          # 3) Marquer la clé comme "ultimately trusted" pour éviter toute invite
+          echo "$FPR:6:" | gpg --batch --yes --import-ownertrust
+
+          # 4) Chiffrer la clé privée SSH pour ce destinataire (zéro interaction)
+          gpg --batch --yes --trust-model always --pinentry-mode loopback \
+              --recipient "$FPR" \
+              --output "/tmp/${NOM}.key.gpg" \
+              --encrypt "$PRIV"
+
+          echo "GPG=/tmp/${NOM}.key.gpg" >> $GITHUB_OUTPUT
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
