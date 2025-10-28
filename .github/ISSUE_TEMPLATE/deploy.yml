@@ -11,10 +11,8 @@ body:
     validations:
       required: true
   - type: textarea
-    id: ssh_pub_key
+    id: pgp_pub_key
     attributes:
-      label: Clé publique SSH (optionnel)
-      description: Collez votre clé (ssh-ed25519/ssh-rsa)
-      placeholder: ssh-ed25519 AAAA... user@host
-    validations:
-      required: false
+      label: Clé PGP publique
+      description: Collez la clé publique ASCII-armored (-----BEGIN PGP PUBLIC KEY BLOCK----- ...)
+

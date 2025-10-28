@@ -1,53 +1,80 @@
-name: Deploy VM (Issue)
+name: Deploy VM (dispatch)
 
 on:
-  issues:
-    types: [opened]
+  workflow_dispatch:
+    inputs:
+      nom_machine:
+        description: "Nom utilisateur (a–z, 0–9, -)"
+        required: true
 
 jobs:
-  dispatch-from-issue:
-    if: contains(github.event.issue.labels.*.name, 'deploy-request')
-    runs-on: unbuntu-latest
+  deploy:
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Extraire champs du formulaire
-        id: parse
-        run: |
-          body=$(jq -r '.issue.body' <<< '${{ toJson(github.event) }}')
-          # Issue Forms met les valeurs au format "### Nom du champ" puis le contenu.
-          # On récupère par titres :
-          nom=$(awk '/^### Nom de la machine/{flag=1;next}/^###/{flag=0}flag' <<< "$body" | tr -d '\r' | xargs)
-          key=$(awk '/^### Clé publique SSH/{flag=1;next}/^###/{flag=0}flag' <<< "$body" | tr -d '\r')
-          echo "NOM=$nom" >> $GITHUB_OUTPUT
-          echo "KEY<<EOF"  >> $GITHUB_OUTPUT
-          echo "$key"      >> $GITHUB_OUTPUT
-          echo "EOF"       >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v4
 
       - name: Validation nom_machine
         run: |
-          if ! [[ "${{ steps.parse.outputs.NOM }}" =~ ^[a-z0-9-]{3,32}$ ]]; then
+          if ! [[ "${{ inputs.nom_machine }}" =~ ^[a-z0-9-]{3,32}$ ]]; then
             echo "Nom invalide (3–32, a–z, 0–9, -)."; exit 1
           fi
 
-      - name: Lancer le workflow principal (workflow_dispatch)
-        uses: benc-uk/workflow-dispatch@v1
-        with:
-          workflow: deploy.yml
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-          inputs: |
-            nom_machine=${{ steps.parse.outputs.NOM }}
-            ssh_pub_key=${{ steps.parse.outputs.KEY }}
+      - name: Générer une paire SSH (ed25519)
+        id: ssh
+        run: |
+          mkdir -p /tmp/keys
+          ssh-keygen -t ed25519 -f /tmp/keys/${{ inputs.nom_machine }} -N "" -C "${{ inputs.nom_machine }}@laser"
+          echo "PUB_PATH=/tmp/keys/${{ inputs.nom_machine }}.pub" >> $GITHUB_OUTPUT
+          echo "PRIV_PATH=/tmp/keys/${{ inputs.nom_machine }}" >> $GITHUB_OUTPUT
+          echo "Clé publique générée :"
+          cat /tmp/keys/${{ inputs.nom_machine }}.pub
 
-      - name: Répondre dans l’issue
-        uses: peter-evans/create-or-update-comment@v4
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
         with:
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ✅ Déploiement lancé pour **${{ steps.parse.outputs.NOM }}**.
-            Suivez l’onglet **Actions** → *Deploy ${{ steps.parse.outputs.NOM }}*.
+          tofu_version: "1.7.0"
 
-      - name: (Optionnel) Fermer l’issue
-        uses: peter-evans/close-issue@v3
+      - name: Tofu init + apply
+        env:
+          PVE_API_URL:      ${{ secrets.PVE_API_URL }}
+          PVE_TOKEN_ID:     ${{ secrets.PVE_TOKEN_ID }}
+          PVE_TOKEN_SECRET: ${{ secrets.PVE_TOKEN_SECRET }}
+          PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
+        run: |
+          tofu init
+          USERS_JSON=$(jq -n --arg u "${{ inputs.nom_machine }}" '[ $u ]')
+          # ⚠️ IMPORTANT :
+          # - var "ssh_pub_key" doit être le CHEMIN vers la clé publique
+          #   si ton code Terraform fait: file(var.ssh_pub_key) pour ssh_authorized_keys.
+          tofu apply -auto-approve \
+            -var "users=${USERS_JSON}" \
+            -var "ssh_pub_key=${{ steps.ssh.outputs.PUB_PATH }}" \
+            -var "pve_api_url=${PVE_API_URL}" \
+            -var "pve_token_id=${PVE_TOKEN_ID}" \
+            -var "pve_token_secret=${PVE_TOKEN_SECRET}" \
+            -var "pve_tls_insecure=${PVE_TLS_INSECURE}"
+
+      - name: Outputs (VM info)
+        run: |
+          tofu output -json vms > /tmp/vm_info.json
+          cat /tmp/vm_info.json
+
+      - name: Upload VM info
+        uses: actions/upload-artifact@v4
         with:
-          issue-number: ${{ github.event.issue.number }}
-          comment: "La demande a été prise en compte, l’issue est fermée."
+          name: vm_info
+          path: /tmp/vm_info.json
+
+      - name: Upload PRIVATE key (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-private-key-${{ inputs.nom_machine }}
+          path: ${{ steps.ssh.outputs.PRIV_PATH }}
+          if-no-files-found: error
+
+      - name: Nettoyage local (sécurité)
+        if: always()
+        run: |
+          shred -u ${{ steps.ssh.outputs.PRIV_PATH }} || true
+          shred -u ${{ steps.ssh.outputs.PUB_PATH }} || true
