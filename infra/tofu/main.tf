@@ -74,12 +74,3 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
 
   tags = ["generated","debian","users"]
 }
-
-# Sorties utiles
-output "vms" {
-  description = "Nom et VMID assignés par Proxmox"
-  value = {
-    for u, r in proxmox_virtual_environment_vm.debian_user :
-    u => { name = r.name, vmid = r.vm_id }
-  }
-}
