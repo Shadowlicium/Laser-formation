@@ -93,7 +93,6 @@ jobs:
         env:
           PVE_API_URL:      ${{ secrets.PVE_API_URL }}
           PVE_TOKEN_ID:     ${{ secrets.PVE_TOKEN_ID }}
-          PVE_TOKEN_SECRET: ${{ secrets.PVE_TOKEN_SECRET }}
           PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
         run: |
           tofu init
@@ -108,7 +107,6 @@ jobs:
             -var "ssh_pub_key=${{ steps.ssh.outputs.PUB }}" \
             -var "pve_api_url=${PVE_API_URL}" \
             -var "pve_token_id=${PVE_TOKEN_ID}" \
-            -var "pve_token_secret=${PVE_TOKEN_SECRET}}" \
             -var "pve_tls_insecure=${INSECURE}"
 
       - name: Export outputs (VM info)

@@ -20,10 +20,6 @@ variable "pve_token_id" {
   type        = string
 }
 
-variable "pve_token_secret" {
-  type        = string
-}
-
 variable "pve_tls_insecure" {
   type    = bool
   default = true
