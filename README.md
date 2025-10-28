@@ -8,4 +8,4 @@ Le schéma de la structure pour le moment ressemblera a ça
 
 [Création de VM]
 
-https://github.com/shadowlicium/laser-formation/issues/new?template=deploy.yml
+https://github.com/Shadowlicium/Laser-formation/issues/new?template=deploy.yml
