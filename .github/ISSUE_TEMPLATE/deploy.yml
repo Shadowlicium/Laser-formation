@@ -10,9 +10,11 @@ body:
       placeholder: alice
     validations:
       required: true
+
   - type: textarea
     id: pgp_pub_key
     attributes:
       label: Clé PGP publique
       description: Collez la clé publique ASCII-armored (-----BEGIN PGP PUBLIC KEY BLOCK----- ...)
-
+    validations:
+      required: true

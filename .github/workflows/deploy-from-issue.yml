@@ -1,41 +1,79 @@
-name: Deploy VM (dispatch)
+name: Deploy VM from Issue
 
 on:
-  workflow_dispatch:
-    inputs:
-      nom_machine:
-        description: "Nom utilisateur (a–z, 0–9, -)"
-        required: true
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
 
 jobs:
   deploy:
+    if: contains(github.event.issue.labels.*.name, 'deploy-request')
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validation nom_machine
+      - name: Install deps (jq, gpg)
+        run: sudo apt-get update && sudo apt-get install -y jq gnupg
+
+      - name: Parse Issue Form fields
+        id: parse
         run: |
-          if ! [[ "${{ inputs.nom_machine }}" =~ ^[a-z0-9-]{3,32}$ ]]; then
+          BODY=$(jq -r '.issue.body' <<< '${{ toJson(github.event) }}')
+
+          # Récupération "Nom de la machine"
+          NOM=$(awk '/^### Nom de la machine/{flag=1;next}/^###/{flag=0}flag' <<< "$BODY" | tr -d '\r' | xargs)
+          # Récupération "Clé PGP publique"
+          PGP=$(awk '/^### Clé PGP publique/{flag=1;next}/^###/{flag=0}flag' <<< "$BODY" | sed 's/\r$//' )
+
+          echo "NOM=$NOM" >> $GITHUB_OUTPUT
+          echo "PGP<<EOF"  >> $GITHUB_OUTPUT
+          echo "$PGP"      >> $GITHUB_OUTPUT
+          echo "EOF"       >> $GITHUB_OUTPUT
+
+      - name: Validate inputs
+        run: |
+          if ! [[ "${{ steps.parse.outputs.NOM }}" =~ ^[a-z0-9-]{3,32}$ ]]; then
             echo "Nom invalide (3–32, a–z, 0–9, -)."; exit 1
           fi
+          if ! grep -q "BEGIN PGP PUBLIC KEY BLOCK" <<< "${{ steps.parse.outputs.PGP }}"; then
+            echo "Clé PGP publique absente ou invalide."; exit 1
+          fi
 
-      - name: Générer une paire SSH (ed25519)
+      - name: Generate SSH keypair (ed25519)
         id: ssh
         run: |
           mkdir -p /tmp/keys
-          ssh-keygen -t ed25519 -f /tmp/keys/${{ inputs.nom_machine }} -N "" -C "${{ inputs.nom_machine }}@laser"
-          echo "PUB_PATH=/tmp/keys/${{ inputs.nom_machine }}.pub" >> $GITHUB_OUTPUT
-          echo "PRIV_PATH=/tmp/keys/${{ inputs.nom_machine }}" >> $GITHUB_OUTPUT
-          echo "Clé publique générée :"
-          cat /tmp/keys/${{ inputs.nom_machine }}.pub
+          ssh-keygen -t ed25519 -f /tmp/keys/${{ steps.parse.outputs.NOM }} -N "" -C "${{ steps.parse.outputs.NOM }}@laser"
+          echo "PUB=/tmp/keys/${{ steps.parse.outputs.NOM }}.pub"  >> $GITHUB_OUTPUT
+          echo "PRIV=/tmp/keys/${{ steps.parse.outputs.NOM }}"      >> $GITHUB_OUTPUT
+
+      - name: Import PGP public key & encrypt SSH private key
+        id: pgp
+        run: |
+          echo "${{ steps.parse.outputs.PGP }}" > /tmp/client_pub.asc
+          gpg --import /tmp/client_pub.asc
+          # Récupérer un identifiant destinataire (email/uid) automatiquement :
+          RECIP=$(gpg --with-colons --import-options show-only --import /tmp/client_pub.asc 2>/dev/null | awk -F: '/^uid:/ {print $10; exit}')
+          if [ -z "$RECIP" ]; then
+            echo "Impossible de déterminer le destinataire PGP."; exit 1
+          fi
+          gpg --yes --output /tmp/${{ steps.parse.outputs.NOM }}.key.gpg \
+              --encrypt --recipient "$RECIP" \
+              "${{ steps.ssh.outputs.PRIV }}"
+          echo "GPG=/tmp/${{ steps.parse.outputs.NOM }}.key.gpg" >> $GITHUB_OUTPUT
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
-        with: { tofu_version: "1.7.0" }
+        with:
+          tofu_version: "1.7.0"
 
-      - name: Tofu init + apply
-        working-directory: infra/tofu              # <--- ICI
+      - name: tofu init + apply
+        working-directory: infra/tofu
         env:
           PVE_API_URL:      ${{ secrets.PVE_API_URL }}
           PVE_TOKEN_ID:     ${{ secrets.PVE_TOKEN_ID }}
@@ -43,35 +81,50 @@ jobs:
           PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
         run: |
           tofu init
-          USERS_JSON=$(jq -n --arg u "${{ inputs.nom_machine }}" '[ $u ]')
+          USERS_JSON=$(jq -n --arg u "${{ steps.parse.outputs.NOM }}" '[ $u ]')
           tofu apply -auto-approve \
             -var "users=${USERS_JSON}" \
-            -var "ssh_pub_key=${{ steps.ssh.outputs.PUB_PATH }}" \
+            -var "ssh_pub_key=${{ steps.ssh.outputs.PUB }}" \
             -var "pve_api_url=${PVE_API_URL}" \
             -var "pve_token_id=${PVE_TOKEN_ID}" \
-            -var "pve_token_secret=${PVE_TOKEN_SECRET}" \
+            -var "pve_token_secret=${PVE_TOKEN_SECRET}}" \
             -var "pve_tls_insecure=${PVE_TLS_INSECURE}"
 
-      - name: Outputs (VM info)
+      - name: Export outputs (VM info)
+        working-directory: infra/tofu
         run: |
           tofu output -json vms > /tmp/vm_info.json
           cat /tmp/vm_info.json
 
-      - name: Upload VM info
+      - name: Upload artifacts (encrypted SSH private key + VM info)
         uses: actions/upload-artifact@v4
         with:
-          name: vm_info
-          path: /tmp/vm_info.json
+          name: vm_${{ steps.parse.outputs.NOM }}_bundle
+          path: |
+            /tmp/vm_info.json
+            ${{ steps.pgp.outputs.GPG }}
 
-      - name: Upload PRIVATE key (artifact)
-        uses: actions/upload-artifact@v4
+      - name: Comment the issue (instructions)
+        uses: peter-evans/create-or-update-comment@v4
         with:
-          name: ssh-private-key-${{ inputs.nom_machine }}
-          path: ${{ steps.ssh.outputs.PRIV_PATH }}
-          if-no-files-found: error
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ✅ Déploiement lancé pour **${{ steps.parse.outputs.NOM }}**.
+            - Télécharge l’artefact **vm_${{ steps.parse.outputs.NOM }}_bundle**
+            - Déchiffre la clé privée SSH avec ta clé PGP :
+              ```bash
+              gpg --decrypt ${{ steps.parse.outputs.NOM }}.key.gpg > id_ed25519
+              chmod 600 id_ed25519
+              ```
+            - Connexion :
+              ```bash
+              ssh -i ./id_ed25519 debian@<IP_VM>
+              ```
+            (L’IP/noms sont dans `vm_info.json`)
 
-      - name: Nettoyage local (sécurité)
+      - name: Cleanup sensitive files
         if: always()
         run: |
-          shred -u ${{ steps.ssh.outputs.PRIV_PATH }} || true
-          shred -u ${{ steps.ssh.outputs.PUB_PATH }} || true
+          shred -u "${{ steps.ssh.outputs.PRIV }}" || true
+          shred -u "${{ steps.ssh.outputs.PUB }}"  || true
+          rm -f /tmp/client_pub.asc || true
