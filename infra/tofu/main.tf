@@ -37,7 +37,7 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
     dedicated = var.memory      # MiB
   }
 
-  # Disque principal (datastore NFS/iSCSI ou local-lvm)
+  # Disque principal (datastore NFS/iSCSI)
   disk {
     datastore_id = var.datastore_id
     interface    = "scsi0"      # "virtio0" possible aussi
@@ -58,6 +58,7 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
 
   # Initialisation (cloud-init)
   initialization {
+    datastore_id = var.datastore_id
     user_account {
       username = "debian"
       # IMPORTANT: dans le provider BPG, c'est "keys" (liste de clés publiques)
