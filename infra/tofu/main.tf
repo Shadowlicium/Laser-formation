@@ -51,10 +51,10 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
     model  = "virtio"
   }
 
-  # clone {
-  #   vm_id = 9000   # <-- VMID du template cloud-init Debian si tu en as un
-  #   full  = true
-  # }
+  clone {
+    vm_id = 9000   # <-- VMID du template cloud-init Debian si tu en as un
+    full  = true
+  }
 
   # Initialisation (cloud-init)
   initialization {
