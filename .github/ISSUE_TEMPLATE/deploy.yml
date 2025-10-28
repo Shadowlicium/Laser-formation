@@ -1,0 +1,20 @@
+name: Demander une VM Debian
+description: Crée une VM sur Proxmox via GitHub Actions
+labels: [deploy-request]
+body:
+  - type: input
+    id: nom_machine
+    attributes:
+      label: Nom de la machine (a–z, 0–9, -)
+      description: 3–32 caractères, minuscules uniquement
+      placeholder: alice
+    validations:
+      required: true
+  - type: textarea
+    id: ssh_pub_key
+    attributes:
+      label: Clé publique SSH (optionnel)
+      description: Collez votre clé (ssh-ed25519/ssh-rsa)
+      placeholder: ssh-ed25519 AAAA... user@host
+    validations:
+      required: false

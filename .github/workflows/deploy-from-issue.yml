@@ -1,0 +1,53 @@
+name: Deploy VM (Issue)
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  dispatch-from-issue:
+    if: contains(github.event.issue.labels.*.name, 'deploy-request')
+    runs-on: debian-latest
+    steps:
+      - name: Extraire champs du formulaire
+        id: parse
+        run: |
+          body=$(jq -r '.issue.body' <<< '${{ toJson(github.event) }}')
+          # Issue Forms met les valeurs au format "### Nom du champ" puis le contenu.
+          # On récupère par titres :
+          nom=$(awk '/^### Nom de la machine/{flag=1;next}/^###/{flag=0}flag' <<< "$body" | tr -d '\r' | xargs)
+          key=$(awk '/^### Clé publique SSH/{flag=1;next}/^###/{flag=0}flag' <<< "$body" | tr -d '\r')
+          echo "NOM=$nom" >> $GITHUB_OUTPUT
+          echo "KEY<<EOF"  >> $GITHUB_OUTPUT
+          echo "$key"      >> $GITHUB_OUTPUT
+          echo "EOF"       >> $GITHUB_OUTPUT
+
+      - name: Validation nom_machine
+        run: |
+          if ! [[ "${{ steps.parse.outputs.NOM }}" =~ ^[a-z0-9-]{3,32}$ ]]; then
+            echo "Nom invalide (3–32, a–z, 0–9, -)."; exit 1
+          fi
+
+      - name: Lancer le workflow principal (workflow_dispatch)
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: deploy.yml
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          inputs: |
+            nom_machine=${{ steps.parse.outputs.NOM }}
+            ssh_pub_key=${{ steps.parse.outputs.KEY }}
+
+      - name: Répondre dans l’issue
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ✅ Déploiement lancé pour **${{ steps.parse.outputs.NOM }}**.
+            Suivez l’onglet **Actions** → *Deploy ${{ steps.parse.outputs.NOM }}*.
+
+      - name: (Optionnel) Fermer l’issue
+        uses: peter-evans/close-issue@v3
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          comment: "La demande a été prise en compte, l’issue est fermée."
