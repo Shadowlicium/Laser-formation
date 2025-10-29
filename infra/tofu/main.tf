@@ -15,27 +15,33 @@ provider "proxmox" {
   insecure  = var.pve_tls_insecure
 }
 
-# 🔧 Génère un fichier cloud-init local
-resource "local_file" "cloudinit_userdata" {
+# 🧩 Upload du fichier Cloud-Init sur le datastore "local/snippets"
+resource "proxmox_virtual_environment_file" "cloudinit_userdata" {
   for_each = toset(var.users)
 
-  filename = "${path.module}/cloudinit-${each.value}.yml"
-  content  = <<-EOF
-    #cloud-config
-    package_update: true
-    package_upgrade: true
-    packages:
-      - nginx
-      - fail2ban
-      - vim
-      - curl
-      - git
-      - htop
-    runcmd:
-      - systemctl enable nginx
-      - systemctl start nginx
-      - echo "<html><body><h1>VM ${each.value}</h1><p>Déployée automatiquement avec OpenTofu + Cloud-Init.</p></body></html>" > /var/www/html/index.html
-  EOF
+  content_type = "snippets"
+  datastore_id = "local"                 # ✅ on utilise "local" (snippets activé)
+  node_name    = var.pve_node_name
+
+  source_raw {
+    data = <<-EOF
+      #cloud-config
+      package_update: true
+      package_upgrade: true
+      packages:
+        - nginx
+        - fail2ban
+        - vim
+        - curl
+        - git
+        - htop
+      runcmd:
+        - systemctl enable nginx
+        - systemctl start nginx
+        - echo "<html><body><h1>VM ${each.value}</h1><p>Déployée automatiquement avec OpenTofu + Cloud-Init.</p></body></html>" > /var/www/html/index.html
+    EOF
+    file_name = "cloudinit-${each.value}.yml"
+  }
 }
 
 # 🖥️ Création d'une VM Debian par utilisateur
@@ -91,9 +97,17 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
       }
     }
 
-    # 🔗 Lien vers le fichier cloud-init généré
-    user_data_file_id = local_file.cloudinit_userdata[each.key].filename
+    # 🔗 Lien vers le fichier Cloud-Init uploadé sur le datastore snippets
+    user_data_file_id = proxmox_virtual_environment_file.cloudinit_userdata[each.key].id
   }
 
   tags = ["generated", "debian", "users"]
+}
+
+# (Optionnel) afficher les IPs détectées via le QEMU Guest Agent
+output "vm_ips" {
+  value = {
+    for k, v in proxmox_virtual_environment_vm.debian_user :
+    k => v.ipv4_addresses
+  }
 }
