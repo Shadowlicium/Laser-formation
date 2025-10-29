@@ -139,6 +139,61 @@ jobs:
             echo "VM_JSON={}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Install Ansible
+        run: sudo apt-get install -y ansible jq
+
+      - name: Configure VM with Ansible
+        env:
+          VM_JSON: ${{ steps.vmout.outputs.VM_JSON }}
+          SSH_PRIV: ${{ steps.ssh.outputs.PRIV }}
+        run: |
+          # Extraire l’IP depuis les outputs tofu
+          IP=$(jq -r '.[] | .ipv4_addresses[0] // empty' <<< "$VM_JSON")
+          [ -n "$IP" ] || { echo "⚠️ Aucune IP trouvée dans la sortie tofu"; exit 0; }
+
+          echo "[target]" > inventory.ini
+          echo "$IP ansible_user=nono ansible_ssh_private_key_file=$SSH_PRIV ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> inventory.ini
+
+          # Playbook d’installation (exemple)
+          cat > playbook.yml <<'EOF'
+          - hosts: target
+            become: yes
+            tasks:
+              - name: Mettre à jour le cache APT
+                apt:
+                  update_cache: yes
+                  cache_valid_time: 3600
+
+              - name: Installer les paquets essentiels
+                apt:
+                  name:
+                    - curl
+                    - git
+                    - vim
+                    - fail2ban
+                  state: present
+
+              - name: Installer et démarrer nginx
+                apt:
+                  name: nginx
+                  state: present
+
+              - name: Activer et démarrer nginx
+                systemd:
+                  name: nginx
+                  enabled: yes
+                  state: started
+
+              - name: Créer une page d’accueil
+                copy:
+                  dest: /var/www/html/index.html
+                  content: |
+                    <html><body><h1>VM de ${{ steps.parse.outputs.NOM }}</h1><p>Déployée automatiquement.</p></body></html>
+          EOF
+
+          echo "🔧 Lancement d’Ansible..."
+          ansible-playbook -i inventory.ini playbook.yml
+
       - name: Load armored key content for comment
         id: load
         run: |
