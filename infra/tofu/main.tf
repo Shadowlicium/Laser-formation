@@ -15,14 +15,36 @@ provider "proxmox" {
   insecure  = var.pve_tls_insecure
 }
 
-# Création d'une VM Debian par utilisateur
+# 🔧 Génère un fichier cloud-init local
+resource "local_file" "cloudinit_userdata" {
+  for_each = toset(var.users)
+
+  filename = "${path.module}/cloudinit-${each.value}.yml"
+  content  = <<-EOF
+    #cloud-config
+    package_update: true
+    package_upgrade: true
+    packages:
+      - nginx
+      - fail2ban
+      - vim
+      - curl
+      - git
+      - htop
+    runcmd:
+      - systemctl enable nginx
+      - systemctl start nginx
+      - echo "<html><body><h1>VM ${each.value}</h1><p>Déployée automatiquement avec OpenTofu + Cloud-Init.</p></body></html>" > /var/www/html/index.html
+  EOF
+}
+
+# 🖥️ Création d'une VM Debian par utilisateur
 resource "proxmox_virtual_environment_vm" "debian_user" {
   for_each  = toset(var.users)
 
   node_name = var.pve_node_name
   name      = "${var.vm_prefix}-${each.value}"
 
-  # Type d’OS invité
   operating_system {
     type = "l26"
   }
@@ -37,7 +59,6 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
     dedicated = var.memory
   }
 
-  # Disque principal
   disk {
     datastore_id = var.datastore_id
     interface    = "scsi0"
@@ -45,19 +66,16 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
     iothread     = true
   }
 
-  # Réseau
   network_device {
     bridge = var.net_bridge
     model  = "virtio"
   }
 
-  # Clone du template cloud-init (ID = 9000)
   clone {
     vm_id = 9000
     full  = true
   }
 
-  # Initialisation (cloud-init)
   initialization {
     datastore_id = var.datastore_id
 
@@ -73,23 +91,8 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
       }
     }
 
-    # 💡 Script cloud-init exécuté automatiquement au premier boot
-    user_data = <<-EOF
-      #cloud-config
-      package_update: true
-      package_upgrade: true
-      packages:
-        - nginx
-        - fail2ban
-        - vim
-        - curl
-        - git
-        - htop
-      runcmd:
-        - systemctl enable nginx
-        - systemctl start nginx
-        - echo "<html><body><h1>VM ${each.value}</h1><p>Déployée automatiquement avec Opentofu + Cloud-Init.</p></body></html>" > /var/www/html/index.html
-    EOF
+    # 🔗 Lien vers le fichier cloud-init généré
+    user_data_file_id = local_file.cloudinit_userdata[each.key].filename
   }
 
   tags = ["generated", "debian", "users"]
