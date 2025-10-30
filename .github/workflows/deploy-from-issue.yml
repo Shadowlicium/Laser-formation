@@ -81,6 +81,7 @@ jobs:
 
       - name: Upload cloud-init snippet to Proxmox
         id: upload
+        shell: bash
         env:
           PVE_HOST: ${{ secrets.PVE_HOST }}
           PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
@@ -89,35 +90,15 @@ jobs:
         run: |
           set -euo pipefail
           USERNAME="${{ steps.parse.outputs.NOM }}"
-          PUBKEY=$(cat /tmp/keys/${USERNAME}.pub)
+          PUBKEY=$(tr -d '\r\n' < "/tmp/keys/${USERNAME}.pub")
           CLOUD_FILE="cloudinit-${USERNAME}.yml"
+          TEMPLATE="infra/templates/cloudinit.tpl"
 
           mkdir -p ~/.ssh
 
-          cat > "$CLOUD_FILE" <<EOF
-#cloud-config
-hostname: debian-${USERNAME}
-users:
-  - name: ${USERNAME}
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - ${PUBKEY}
-package_update: true
-package_upgrade: true
-packages:
-  - nginx
-  - fail2ban
-  - vim
-  - curl
-  - git
-  - htop
-  - avahi-daemon
-runcmd:
-  - systemctl enable nginx
-  - systemctl start nginx
-  - echo "<html><body><h1>VM ${USERNAME}</h1><p>Déployée automatiquement avec OpenTofu + Cloud-Init.</p></body></html>" > /var/www/html/index.html
-EOF
+          echo "➡️ Génération du snippet à partir du template..."
+          export USERNAME PUBKEY
+          envsubst '${USERNAME} ${PUBKEY}' < "$TEMPLATE" > "$CLOUD_FILE"
 
           echo "${PVE_SSH_KEY}" > /tmp/key.pem
           chmod 600 /tmp/key.pem
@@ -127,7 +108,7 @@ EOF
           scp -P "${PVE_SSH_PORT:-32222}" -i /tmp/key.pem -o StrictHostKeyChecking=yes \
             "$CLOUD_FILE" "${PVE_SSH_USER}@${PVE_HOST}:/var/lib/vz/snippets/"
 
-          echo "CLOUD_FILE_NAME=$CLOUD_FILE" >> $GITHUB_OUTPUT
+          echo "CLOUD_FILE_NAME=$CLOUD_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
