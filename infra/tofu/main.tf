@@ -53,14 +53,16 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
 
   initialization {
     datastore_id = var.datastore_id
+
     ip_config {
       ipv4 {
         address = "dhcp"
       }
     }
 
-    # ✅ On fait référence directement au fichier déjà présent sur le Proxmox
-    user_data_file_id = "local:snippets/cloudinit-nono.yml"
+    # 🔗 Snippet cloud-init spécifique à l'utilisateur
+    # (uploadé au préalable en SSH par le workflow)
+    user_data_file_id = "local:snippets/cloudinit-${each.value}.yml"
   }
 
   tags = ["generated", "debian", "users"]
