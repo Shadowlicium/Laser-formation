@@ -92,7 +92,7 @@ jobs:
           USERNAME="${{ steps.parse.outputs.NOM }}"
           PUBKEY=$(tr -d '\r\n' < "/tmp/keys/${USERNAME}.pub")
           CLOUD_FILE="cloudinit-${USERNAME}.yml"
-          TEMPLATE="infra/templates/cloudinit.tpl"
+          TEMPLATE="infra/tofu/cloudinit.tpl"
 
           mkdir -p ~/.ssh
 
