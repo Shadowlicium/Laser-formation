@@ -11,7 +11,12 @@ users:
     groups: sudo
     shell: /bin/bash
     lock_passwd: false
-    passwd: changeme
+
+chpasswd:
+  list: |
+    nono:changeme
+  expire: false
+
 package_update: true
 package_upgrade: true
 packages:
