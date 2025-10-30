@@ -202,18 +202,18 @@ jobs:
             chmod 600 id_ed25519
             ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@<IP_VM>
             ```
-            
-      - name: Wait for VM to boot and retrieve IP (guest agent)
-        id: ip
+      - name: Get VM IP via SSH on Proxmox
+        id: ip_ssh
         shell: bash
         env:
-          # ⚠️ PVE_API_URL doit FINIR par /api2/json (ex: https://pve.example.com:8006/api2/json)
-          PVE_API_URL: ${{ secrets.PVE_API_URL }}
-          # ⚠️ PVE_TOKEN_ID doit être AU FORMAT COMPLET: user@realm!tokenid=secret
-          PVE_TOKEN_ID: ${{ secrets.PVE_TOKEN_ID }}
+          PVE_HOST:     ${{ secrets.PVE_HOST }}
+          PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
+          PVE_SSH_KEY:  ${{ secrets.PVE_SSH_KEY }}
+          PVE_SSH_PORT: ${{ secrets.PVE_SSH_PORT }} # ex: 32222
         run: |
           set -euo pipefail
 
+          # Pré-requis côté runner (on a jq déjà installé plus haut)
           VM_JSON_FILE="/tmp/vm_info.json"
           if [ ! -f "$VM_JSON_FILE" ]; then
             echo "❌ /tmp/vm_info.json introuvable"
@@ -221,76 +221,68 @@ jobs:
             exit 0
           fi
 
-          # Essaye de lire node & vmid depuis les outputs
           VMID="$(jq -r 'to_entries[0].value.vmid // empty' "$VM_JSON_FILE")"
           NODE="$(jq -r 'to_entries[0].value.node // empty' "$VM_JSON_FILE")"
-
-          # Fallback: si node absent, on le récupère via /cluster/resources (map VMID->node)
-          if [ -z "$NODE" ]; then
-            echo "ℹ️ Node absent dans outputs → fallback via /cluster/resources"
-            RES="$(curl -sk -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
-              "${PVE_API_URL%/}/cluster/resources?type=vm")"
-            NODE="$(jq -r --arg VMID "$VMID" '.data[] | select(.vmid == ($VMID|tonumber)) | .node' <<< "$RES" || true)"
+          if [ -z "$VMID" ] || [ "$VMID" = "null" ]; then
+            echo "❌ VMID manquant dans les outputs"
+            echo "IP=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          if [ -z "$VMID" ] || [ -z "$NODE" ]; then
-            echo "⚠️ Impossible d’extraire VMID ou node (VMID='$VMID', NODE='$NODE')"
+          # Clé SSH temporaire
+          echo "${PVE_SSH_KEY}" > /tmp/pve_key.pem
+          chmod 600 /tmp/pve_key.pem
+          PORT="${PVE_SSH_PORT:-32222}"
+
+          # Si le node n'est pas remonté par Terraform, on le devine via Proxmox
+          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
+            echo "ℹ️ Node absent, détection via /cluster/resources…"
+            RESP_NODE="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
+              "${PVE_SSH_USER}@${PVE_HOST}" \
+              "pvesh get /cluster/resources --type vm" || true)"
+            NODE="$(jq -r --arg VMID "$VMID" '.[] | select(.vmid == ($VMID|tonumber)) | .node' <<< "$RESP_NODE" || true)"
+          fi
+
+          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
+            echo "❌ Impossible d’identifier le node de la VM $VMID"
             echo "IP=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "🔍 VMID=$VMID  NODE=$NODE"
 
-          BASE_URL="${PVE_API_URL%/}/nodes/${NODE}/qemu/${VMID}"
-
-          # Attend que la VM soit 'running'
+          # Attente du démarrage + agent
           ATTEMPTS=40   # ~10 min avec SLEEP=15
           SLEEP=15
           for i in $(seq 1 $ATTEMPTS); do
-            STATUS_JSON="$(curl -sk -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
-              "${BASE_URL}/status/current" || true)"
-            STATUS="$(jq -r '.data.status // empty' <<< "$STATUS_JSON")"
-            echo "⏱️ [$i/$ATTEMPTS] VM status: ${STATUS:-unknown}"
-            [ "$STATUS" = "running" ] && break
-            sleep $SLEEP
-          done
+            echo "⏱️ [$i/$ATTEMPTS] interrogation du guest agent…"
 
-          # Ping l’agent pour s’assurer qu’il répond
-          for i in $(seq 1 $ATTEMPTS); do
-            PING_JSON="$(curl -sk -w '\n%{http_code}' -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
-              "${BASE_URL}/agent/ping" || true)"
-            HTTP_CODE="$(tail -n1 <<< "$PING_JSON")"
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "✅ Agent joignable"
-              break
-            fi
-            echo "⏳ Agent non dispo (HTTP $HTTP_CODE). Retry dans ${SLEEP}s…"
-            sleep $SLEEP
-          done
+            # 1) ping de l’agent (facultatif, passera si agent up)
+            ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
+              "${PVE_SSH_USER}@${PVE_HOST}" \
+              "pvesh get /nodes/${NODE}/qemu/${VMID}/agent/ping" >/dev/null 2>&1 || true
 
-          # Récupère les interfaces (IPv4)
-          for i in $(seq 1 $ATTEMPTS); do
-            RESP="$(curl -sk -w '\n%{http_code}' -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
-              "${BASE_URL}/agent/network-get-interfaces" || true)"
-            CODE="$(tail -n1 <<< "$RESP")"
-            BODY="$(head -n -1 <<< "$RESP")"
+            # 2) récupération des interfaces
+            RESP="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
+              "${PVE_SSH_USER}@${PVE_HOST}" \
+              "pvesh get /nodes/${NODE}/qemu/${VMID}/agent/network-get-interfaces" || true)"
 
-            if [ "$CODE" != "200" ]; then
-              echo "⚠️ network-get-interfaces HTTP=$CODE. BODY: $(echo "$BODY" | tr -d '\n' | cut -c1-200)…"
-            else
-              HAS_DATA="$(jq -e '.data != null' <<< "$BODY" >/dev/null 2>&1 && echo yes || echo no)"
-              if [ "$HAS_DATA" = "yes" ]; then
-                IP="$(jq -r '.data[]?["ip-addresses"][]? | select(."ip-address-type"=="ipv4") | ."ip-address"' <<< "$BODY" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
-                if [ -n "$IP" ]; then
-                  echo "✅ IP détectée: $IP"
-                  echo "IP=$IP" >> "$GITHUB_OUTPUT"
-                  exit 0
-                fi
+            # Parse local avec jq (installé sur le runner)
+            if jq -e '.data' >/dev/null 2>&1 <<<"$RESP"; then
+              IP="$(jq -r '.data[]?["ip-addresses"][]? 
+                          | select(."ip-address-type"=="ipv4") 
+                          | ."ip-address"' <<< "$RESP" \
+                    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+                    | head -n1 || true)"
+              if [ -n "$IP" ]; then
+                echo "✅ IP détectée : $IP"
+                echo "IP=$IP" >> "$GITHUB_OUTPUT"
+                exit 0
               fi
             fi
 
-            echo "⏳ IP non dispo. Retry dans ${SLEEP}s…"
-            sleep $SLEEP
+            echo "⏳ IP non dispo, retry dans ${SLEEP}s…"
+            sleep "$SLEEP"
           done
 
           echo "⚠️ Aucune IP récupérée."
