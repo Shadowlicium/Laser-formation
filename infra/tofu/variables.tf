@@ -60,3 +60,9 @@ variable "vm_prefix" {
   type    = string
   default = "debian"
 }
+
+variable "admin_password" {
+  type	        = string
+  description   = "mot de passe du compte admin"
+  default	= "changeme"
+}
