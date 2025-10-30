@@ -203,6 +203,51 @@ jobs:
             ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@<IP_VM>
             ```
 
+      - name: Get VM IP via Proxmox API (guest agent)
+        id: ip
+        shell: bash
+        env:
+          PVE_API_URL: ${{ secrets.PVE_API_URL }}
+          PVE_TOKEN_ID: ${{ secrets.PVE_TOKEN_ID }}
+        run: |
+          set -euo pipefail
+          echo "Récupération de l'IP de la VM via le QEMU Guest Agent..."
+
+          # Récupère infos du fichier JSON généré par tofu
+          VM_JSON_FILE="/tmp/vm_info.json"
+          if [ ! -f "$VM_JSON_FILE" ]; then
+            echo "⚠️ Aucun fichier JSON trouvé, impossible de récupérer l'IP."
+            echo "IP=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          VMID=$(jq -r 'to_entries[0].value.vmid' "$VM_JSON_FILE")
+          NODE=$(jq -r 'to_entries[0].value.node' "$VM_JSON_FILE")
+
+          if [ -z "$VMID" ] || [ "$VMID" == "null" ]; then
+            echo "⚠️ VMID introuvable dans les outputs."
+            echo "IP=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "→ VMID: $VMID sur node $NODE"
+
+          # Appel API guest agent
+          RESPONSE=$(curl -ks \
+            -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
+            "${PVE_API_URL}/nodes/${NODE}/qemu/${VMID}/agent/network-get-interfaces" || true)
+
+          # Parsing JSON (si qemu-guest-agent est actif)
+          IP=$(jq -r '.data[]?."ip-addresses"[]?."ip-address" | select(test("^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"))' <<< "$RESPONSE" | head -n1 || true)
+
+          if [ -z "$IP" ]; then
+            echo "⚠️ Impossible de récupérer une IP (agent inactif ?)"
+            echo "IP=unknown" >> "$GITHUB_OUTPUT"
+          else
+            echo "✅ IP détectée : $IP"
+            echo "IP=$IP" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Remove snippet from Proxmox
         if: always()
         shell: bash
