@@ -5,7 +5,7 @@ output "vms" {
     u => {
       name = r.name
       vmid = r.vm_id
-      ip   = try(v.ipv4_addresses[0], "N/A")
+      ip   = "unknown"
     }
   }
 }
