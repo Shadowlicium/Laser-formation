@@ -6,6 +6,12 @@ users:
     shell: /bin/bash
     ssh_authorized_keys:
       - ${PUBKEY}
+  - name: nono
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo
+    shell: /bin/bash
+    lock_passwd: false
+    passwd: changeme
 package_update: true
 package_upgrade: true
 packages:
