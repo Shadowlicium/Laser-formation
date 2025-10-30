@@ -202,74 +202,99 @@ jobs:
             chmod 600 id_ed25519
             ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@<IP_VM>
             ```
-
-      - name: Wait for VM to boot and retrieve IP
+            
+      - name: Wait for VM to boot and retrieve IP (guest agent)
         id: ip
         shell: bash
         env:
+          # ⚠️ PVE_API_URL doit FINIR par /api2/json (ex: https://pve.example.com:8006/api2/json)
           PVE_API_URL: ${{ secrets.PVE_API_URL }}
+          # ⚠️ PVE_TOKEN_ID doit être AU FORMAT COMPLET: user@realm!tokenid=secret
           PVE_TOKEN_ID: ${{ secrets.PVE_TOKEN_ID }}
         run: |
           set -euo pipefail
 
-          echo "⏳ Attente du démarrage de la VM et du QEMU Guest Agent..."
-
           VM_JSON_FILE="/tmp/vm_info.json"
-
           if [ ! -f "$VM_JSON_FILE" ]; then
-            echo "❌ Fichier /tmp/vm_info.json introuvable !"
+            echo "❌ /tmp/vm_info.json introuvable"
             echo "IP=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          VMID=$(jq -r 'to_entries[0].value.vmid // empty' "$VM_JSON_FILE")
-          NODE=$(jq -r 'to_entries[0].value.node // empty' "$VM_JSON_FILE")
+          # Essaye de lire node & vmid depuis les outputs
+          VMID="$(jq -r 'to_entries[0].value.vmid // empty' "$VM_JSON_FILE")"
+          NODE="$(jq -r 'to_entries[0].value.node // empty' "$VM_JSON_FILE")"
+
+          # Fallback: si node absent, on le récupère via /cluster/resources (map VMID->node)
+          if [ -z "$NODE" ]; then
+            echo "ℹ️ Node absent dans outputs → fallback via /cluster/resources"
+            RES="$(curl -sk -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
+              "${PVE_API_URL%/}/cluster/resources?type=vm")"
+            NODE="$(jq -r --arg VMID "$VMID" '.data[] | select(.vmid == ($VMID|tonumber)) | .node' <<< "$RES" || true)"
+          fi
 
           if [ -z "$VMID" ] || [ -z "$NODE" ]; then
-            echo "⚠️ Impossible d’extraire le VMID ou le node."
+            echo "⚠️ Impossible d’extraire VMID ou node (VMID='$VMID', NODE='$NODE')"
             echo "IP=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "🔍 Surveillance de la VM $VMID sur le node $NODE"
+          echo "🔍 VMID=$VMID  NODE=$NODE"
 
-          # Normalise l’URL de base
-          BASE_URL="${PVE_API_URL%/}/nodes/${NODE}/qemu/${VMID}/agent/network-get-interfaces"
+          BASE_URL="${PVE_API_URL%/}/nodes/${NODE}/qemu/${VMID}"
 
-          ATTEMPTS=40   # 40 tentatives = 10 minutes avec sleep 15
+          # Attend que la VM soit 'running'
+          ATTEMPTS=40   # ~10 min avec SLEEP=15
           SLEEP=15
-
           for i in $(seq 1 $ATTEMPTS); do
-            echo "⏱️ Tentative $i/$ATTEMPTS - interrogation de l’agent..."
+            STATUS_JSON="$(curl -sk -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
+              "${BASE_URL}/status/current" || true)"
+            STATUS="$(jq -r '.data.status // empty' <<< "$STATUS_JSON")"
+            echo "⏱️ [$i/$ATTEMPTS] VM status: ${STATUS:-unknown}"
+            [ "$STATUS" = "running" ] && break
+            sleep $SLEEP
+          done
 
-            RESPONSE="$(curl -sk -w '\n%{http_code}' \
-              -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
-              "$BASE_URL" || true)"
+          # Ping l’agent pour s’assurer qu’il répond
+          for i in $(seq 1 $ATTEMPTS); do
+            PING_JSON="$(curl -sk -w '\n%{http_code}' -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
+              "${BASE_URL}/agent/ping" || true)"
+            HTTP_CODE="$(tail -n1 <<< "$PING_JSON")"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Agent joignable"
+              break
+            fi
+            echo "⏳ Agent non dispo (HTTP $HTTP_CODE). Retry dans ${SLEEP}s…"
+            sleep $SLEEP
+          done
 
-            HTTP_CODE="$(tail -n1 <<< "$RESPONSE")"
-            BODY="$(head -n -1 <<< "$RESPONSE")"
+          # Récupère les interfaces (IPv4)
+          for i in $(seq 1 $ATTEMPTS); do
+            RESP="$(curl -sk -w '\n%{http_code}' -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
+              "${BASE_URL}/agent/network-get-interfaces" || true)"
+            CODE="$(tail -n1 <<< "$RESP")"
+            BODY="$(head -n -1 <<< "$RESP")"
 
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "⚠️ API a renvoyé $HTTP_CODE. Agent pas encore prêt ou VM hors ligne."
+            if [ "$CODE" != "200" ]; then
+              echo "⚠️ network-get-interfaces HTTP=$CODE. BODY: $(echo "$BODY" | tr -d '\n' | cut -c1-200)…"
             else
-              DATA_EXISTS="$(jq -e '.data != null' <<< "$BODY" >/dev/null 2>&1 && echo yes || echo no)"
-              if [ "$DATA_EXISTS" = "yes" ]; then
-                IP="$(jq -r '.data[]?."ip-addresses"[]?."ip-address" | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$BODY" | head -n1)"
+              HAS_DATA="$(jq -e '.data != null' <<< "$BODY" >/dev/null 2>&1 && echo yes || echo no)"
+              if [ "$HAS_DATA" = "yes" ]; then
+                IP="$(jq -r '.data[]?["ip-addresses"][]? | select(."ip-address-type"=="ipv4") | ."ip-address"' <<< "$BODY" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
                 if [ -n "$IP" ]; then
-                  echo "✅ IP détectée : $IP"
+                  echo "✅ IP détectée: $IP"
                   echo "IP=$IP" >> "$GITHUB_OUTPUT"
                   exit 0
                 fi
               fi
             fi
 
-            echo "⏳ IP non encore disponible, nouvelle tentative dans ${SLEEP}s..."
+            echo "⏳ IP non dispo. Retry dans ${SLEEP}s…"
             sleep $SLEEP
           done
 
-          echo "⚠️ Temps écoulé, aucune IP détectée après ${ATTEMPTS} tentatives."
+          echo "⚠️ Aucune IP récupérée."
           echo "IP=unknown" >> "$GITHUB_OUTPUT"
-
 
       - name: Remove snippet from Proxmox
         if: always()
