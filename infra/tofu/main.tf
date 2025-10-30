@@ -53,13 +53,6 @@ resource "proxmox_virtual_environment_vm" "debian_user" {
 
   initialization {
     datastore_id = var.datastore_id
-
-    user_account {
-      username = "nono"
-      password = var.user_password
-      keys     = [ file(var.ssh_pub_key) ]
-    }
-
     ip_config {
       ipv4 {
         address = "dhcp"
