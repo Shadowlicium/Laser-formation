@@ -215,39 +215,61 @@ jobs:
           echo "⏳ Attente du démarrage de la VM et du QEMU Guest Agent..."
 
           VM_JSON_FILE="/tmp/vm_info.json"
-          VMID=$(jq -r 'to_entries[0].value.vmid' "$VM_JSON_FILE")
-          NODE=$(jq -r 'to_entries[0].value.node' "$VM_JSON_FILE")
 
-          if [ -z "$VMID" ] || [ "$VMID" == "null" ]; then
-            echo "⚠️ VMID introuvable dans les outputs."
+          if [ ! -f "$VM_JSON_FILE" ]; then
+            echo "❌ Fichier /tmp/vm_info.json introuvable !"
             echo "IP=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Attendre jusqu'à 10 minutes (boucle de 10x30s)
-          ATTEMPTS=20
-          SLEEP=15
-          for i in $(seq 1 $ATTEMPTS); do
-            echo "⏱️ Tentative $i/$ATTEMPTS - vérification du QEMU Guest Agent..."
-            RESPONSE=$(curl -ks \
-              -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
-              "${PVE_API_URL}/nodes/${NODE}/qemu/${VMID}/agent/network-get-interfaces" || true)
+          VMID=$(jq -r 'to_entries[0].value.vmid // empty' "$VM_JSON_FILE")
+          NODE=$(jq -r 'to_entries[0].value.node // empty' "$VM_JSON_FILE")
 
-            if jq -e '.data' <<< "$RESPONSE" >/dev/null 2>&1; then
-              IP=$(jq -r '.data[]?."ip-addresses"[]?."ip-address" | select(test("^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"))' <<< "$RESPONSE" | head -n1)
-              if [ -n "$IP" ]; then
-                echo "✅ IP détectée : $IP"
-                echo "IP=$IP" >> "$GITHUB_OUTPUT"
-                exit 0
+          if [ -z "$VMID" ] || [ -z "$NODE" ]; then
+            echo "⚠️ Impossible d’extraire le VMID ou le node."
+            echo "IP=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "🔍 Surveillance de la VM $VMID sur le node $NODE"
+
+          # Normalise l’URL de base
+          BASE_URL="${PVE_API_URL%/}/nodes/${NODE}/qemu/${VMID}/agent/network-get-interfaces"
+
+          ATTEMPTS=40   # 40 tentatives = 10 minutes avec sleep 15
+          SLEEP=15
+
+          for i in $(seq 1 $ATTEMPTS); do
+            echo "⏱️ Tentative $i/$ATTEMPTS - interrogation de l’agent..."
+
+            RESPONSE="$(curl -sk -w '\n%{http_code}' \
+              -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
+              "$BASE_URL" || true)"
+
+            HTTP_CODE="$(tail -n1 <<< "$RESPONSE")"
+            BODY="$(head -n -1 <<< "$RESPONSE")"
+
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "⚠️ API a renvoyé $HTTP_CODE. Agent pas encore prêt ou VM hors ligne."
+            else
+              DATA_EXISTS="$(jq -e '.data != null' <<< "$BODY" >/dev/null 2>&1 && echo yes || echo no)"
+              if [ "$DATA_EXISTS" = "yes" ]; then
+                IP="$(jq -r '.data[]?."ip-addresses"[]?."ip-address" | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$BODY" | head -n1)"
+                if [ -n "$IP" ]; then
+                  echo "✅ IP détectée : $IP"
+                  echo "IP=$IP" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
               fi
             fi
 
-            echo "⏳ Agent inactif ou IP non encore disponible... Attente ${SLEEP}s"
+            echo "⏳ IP non encore disponible, nouvelle tentative dans ${SLEEP}s..."
             sleep $SLEEP
           done
 
-          echo "⚠️ Temps écoulé, impossible de récupérer l'IP."
+          echo "⚠️ Temps écoulé, aucune IP détectée après ${ATTEMPTS} tentatives."
           echo "IP=unknown" >> "$GITHUB_OUTPUT"
+
 
       - name: Remove snippet from Proxmox
         if: always()
