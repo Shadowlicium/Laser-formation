@@ -258,9 +258,9 @@ jobs:
             echo "⏱️ [$i/$ATTEMPTS] interrogation du guest agent…"
 
             # 1) ping de l’agent (facultatif, passera si agent up)
-            ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
-              "${PVE_SSH_USER}@${PVE_HOST}" \
-              "pvesh get /nodes/${NODE}/qemu/${VMID}/agent/ping" >/dev/null 2>&1 || true
+           ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
+             "${PVE_SSH_USER}@${PVE_HOST}" \
+             "sudo pvesh get /nodes/${NODE}/qemu/${VMID}/agent/network-get-interfaces"
 
             # 2) récupération des interfaces
             RESP="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
