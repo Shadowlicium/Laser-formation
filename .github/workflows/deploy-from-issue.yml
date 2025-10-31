@@ -14,7 +14,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkShadowlicium
+/
+Laser-formation
+￼
+￼
+￼
+￼
+￼
+Cout@v4
 
       - name: Install deps (jq, gpg, openssh)
         shell: bash
@@ -202,112 +210,6 @@ jobs:
             chmod 600 id_ed25519
             ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@<IP_VM>
             ```
-      - name: Get VM IP via SSH on Proxmox (resilient)
-        id: ip_ssh
-        shell: bash
-        env:
-          PVE_HOST:     ${{ secrets.PVE_HOST }}
-          PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
-          PVE_SSH_KEY:  ${{ secrets.PVE_SSH_KEY }}
-          PVE_SSH_PORT: ${{ secrets.PVE_SSH_PORT }} # ex: 32222
-        run: |
-          set -euo pipefail
-
-          VM_JSON_FILE="/tmp/vm_info.json"
-          if [ ! -f "$VM_JSON_FILE" ]; then
-            echo "❌ /tmp/vm_info.json introuvable"
-            echo "IP=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          VMID="$(jq -r 'to_entries[0].value.vmid // empty' "$VM_JSON_FILE")"
-          NODE="$(jq -r 'to_entries[0].value.node // empty' "$VM_JSON_FILE")"
-          if [ -z "$VMID" ] || [ "$VMID" = "null" ]; then
-            echo "❌ VMID manquant dans les outputs"
-            echo "IP=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Clé SSH
-          echo "${PVE_SSH_KEY}" > /tmp/pve_key.pem
-          chmod 600 /tmp/pve_key.pem
-          PORT="${PVE_SSH_PORT:-32222}"
-
-          # Si le node est manquant, le deviner via /cluster/resources
-          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
-            echo "ℹ️ Node absent, détection via /cluster/resources…"
-            RESP_NODE="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
-              "${PVE_SSH_USER}@${PVE_HOST}" \
-              "sudo pvesh get /cluster/resources --type vm" 2>/dev/null || true)"
-            NODE="$(jq -r --arg VMID "$VMID" '.[] | select(.vmid == ($VMID|tonumber)) | .node' <<< "$RESP_NODE" || true)"
-          fi
-
-          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
-            echo "❌ Impossible d’identifier le node de la VM $VMID"
-            echo "IP=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "🔍 VMID=$VMID  NODE=$NODE"
-
-          ATTEMPTS=40   # ~10 min avec SLEEP=15
-          SLEEP=15
-
-          # 1) Attendre que la VM soit 'running'
-          for i in $(seq 1 $ATTEMPTS); do
-            STATUS_JSON="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
-              "${PVE_SSH_USER}@${PVE_HOST}" \
-              "sudo pvesh get /nodes/${NODE}/qemu/${VMID}/status/current" 2>/dev/null || true)"
-            STATUS="$(jq -r '.data.status // empty' <<< "$STATUS_JSON" 2>/dev/null || true)"
-            echo "⏱️ [$i/$ATTEMPTS] VM status: ${STATUS:-unknown}"
-            [ "$STATUS" = "running" ] && break
-            sleep "$SLEEP"
-          done
-
-          # 2) Boucle jusqu'à ce que l'agent réponde et retourne une IPv4
-          for i in $(seq 1 $ATTEMPTS); do
-            echo "⏱️ [$i/$ATTEMPTS] interrogation du guest agent…"
-
-            # Ping agent (peut échouer → on ignore)
-            ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
-              "${PVE_SSH_USER}@${PVE_HOST}" \
-              "sudo pvesh get /nodes/${NODE}/qemu/${VMID}/agent/ping" >/dev/null 2>&1 || true
-
-            # Récup interfaces (ne JAMAIS faire échouer le step ici)
-            RESP="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=no \
-              "${PVE_SSH_USER}@${PVE_HOST}" \
-              "sudo pvesh get /nodes/${NODE}/qemu/${VMID}/agent/network-get-interfaces" 2>&1 || true)"
-
-            # Si l’agent n’est pas prêt, Proxmox renvoie souvent ce texte explicite
-            if echo "$RESP" | grep -qi 'guest agent is not running'; then
-              echo "⏳ Agent non prêt… retry dans ${SLEEP}s"
-              sleep "$SLEEP"
-              continue
-            fi
-
-            # Si JSON valide → on tente d’extraire une IPv4
-            if jq -e . >/dev/null 2>&1 <<< "$RESP"; then
-              IP="$(jq -r '.data[]?["ip-addresses"][]? 
-                            | select(."ip-address-type"=="ipv4") 
-                            | ."ip-address"' <<< "$RESP" \
-                    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
-                    | head -n1 || true)"
-              if [ -n "$IP" ]; then
-                echo "✅ IP détectée : $IP"
-                echo "IP=$IP" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-            else
-              # Pas du JSON (erreur pvesh), on log et on ré-essaie
-              echo "ℹ️ Réponse non-JSON (agent pas prêt ?) : $(echo "$RESP" | head -n 1)"
-            fi
-
-            sleep "$SLEEP"
-          done
-
-          echo "⚠️ Aucune IP récupérée."
-          echo "IP=unknown" >> "$GITHUB_OUTPUT"
-
 
       - name: Remove snippet from Proxmox
         if: always()
