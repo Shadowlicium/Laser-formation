@@ -165,42 +165,70 @@ jobs:
             echo "VM_JSON={}" >> "$GITHUB_OUTPUT"
           fi
           
-      - name: Retrieve MAC address
+      - name: Retrieve MAC address via SSH (pvesh)
         id: mac
         shell: bash
         env:
-          PVE_API_URL: ${{ secrets.PVE_API_URL }}
-          PVE_TOKEN_ID: ${{ secrets.PVE_TOKEN_ID }}
-          PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
+          PVE_HOST:     ${{ secrets.PVE_HOST }}
+          PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
+          PVE_SSH_KEY:  ${{ secrets.PVE_SSH_KEY }}
+          PVE_SSH_PORT: ${{ secrets.PVE_SSH_PORT }} # ex: 32222
         run: |
           set -euo pipefail
+
           VM_JSON_FILE="/tmp/vm_info.json"
-
-          # Récupération du VMID et du node depuis les outputs tofu
-          VMID=$(jq -r 'to_entries[0].value.vmid' "$VM_JSON_FILE")
-          NODE=$(jq -r 'to_entries[0].value.node' "$VM_JSON_FILE")
-
-          if [ -z "$VMID" ] || [ "$VMID" == "null" ]; then
-            echo "⚠️ VMID introuvable dans les outputs."
+          if [ ! -f "$VM_JSON_FILE" ]; then
+            echo "❌ /tmp/vm_info.json introuvable"
             echo "MAC=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "🔍 Récupération de la MAC pour VMID=$VMID sur le node=$NODE..."
+          VMID="$(jq -r 'to_entries[0].value.vmid // empty' "$VM_JSON_FILE")"
+          NODE="$(jq -r 'to_entries[0].value.node // empty' "$VM_JSON_FILE")"
+          if [ -z "$VMID" ] || [ "$VMID" = "null" ]; then
+            echo "❌ VMID manquant dans les outputs"
+            echo "MAC=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          RESPONSE=$(curl -sk \
-            -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
-            "${PVE_API_URL}/nodes/${NODE}/qemu/${VMID}/config")
+          # Prépare clé/known_hosts
+          echo "${PVE_SSH_KEY}" > /tmp/pve_key.pem
+          chmod 600 /tmp/pve_key.pem
+          PORT="${PVE_SSH_PORT:-32222}"
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$PORT" "$PVE_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-          MAC=$(jq -r '.data.net0' <<< "$RESPONSE" | sed -E 's/.*=([0-9A-Fa-f:]+),.*/\1/')
-          if [[ "$MAC" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+          # Si le node n'est pas renseigné par Terraform, on le déduit
+          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
+            echo "ℹ️ Node absent → détection via /cluster/resources…"
+            RESP_NODE="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=yes \
+              "${PVE_SSH_USER}@${PVE_HOST}" \
+              "sudo pvesh get /cluster/resources --type vm" || true)"
+            NODE="$(printf '%s' "$RESP_NODE" | grep -oE '\"vmid\":\s*'${VMID}',[^}]+' | grep -oE '\"node\":\"[^"]+\"' | cut -d: -f2 | tr -d '\"')"
+          fi
+
+          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
+            echo "❌ Impossible d’identifier le node de la VM $VMID"
+            echo "MAC=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "🔍 VMID=$VMID  NODE=$NODE"
+
+          # Récupère la config de la VM et extrait la MAC via regex (sans jq)
+          RESP_CFG="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=yes \
+            "${PVE_SSH_USER}@${PVE_HOST}" \
+            "sudo pvesh get /nodes/${NODE}/qemu/${VMID}/config" || true)"
+
+          MAC="$(printf '%s' "$RESP_CFG" | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}' | head -n1 || true)"
+
+          if [ -n "$MAC" ]; then
             echo "✅ MAC détectée : $MAC"
             echo "MAC=$MAC" >> "$GITHUB_OUTPUT"
           else
-            echo "⚠️ MAC introuvable ou invalide."
+            echo "⚠️ MAC introuvable."
             echo "MAC=unknown" >> "$GITHUB_OUTPUT"
           fi
-
 
       - name: Load armored key content for comment
         id: load
@@ -240,6 +268,7 @@ jobs:
             ```bash
             gpg --decrypt id_ed25519.asc > id_ed25519
             chmod 600 id_ed25519
+            # MAC: ${{ steps.mac.outputs.MAC }}
             ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@${{ steps.mac.outputs.MAC }}
             ```
 
