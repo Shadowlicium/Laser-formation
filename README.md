@@ -17,15 +17,17 @@ gpg --full-generate-key
 
 gpg --list-keys
 
-exemple
+#exemple
 
-pub   rsa4096 2025-10-28 [SC] [expires: 2027-10-28]
-      1234ABCD5678EF90AABBCCDDEEFF001122334455
-uid           [ultimate] Shadowlicium <shadow@example.com>
-sub   rsa4096 2025-10-28 [E]
+#pub   rsa4096 2025-10-28 [SC] [expires: 2027-10-28]
+#      1234ABCD5678EF90AABBCCDDEEFF001122334455
+#uid           [ultimate] Shadowlicium <shadow@example.com>
+#sub   rsa4096 2025-10-28 [E]
 
-gpg --armor --export shadowlicium > public.asc
+#gpg --armor --export shadowlicium > public.asc
 
-On copie ensuite tout le contenu de public.asc et on le transmet dans le formulaire de demande
+#cat public.asc
+
+#On copie ensuite tout le contenu de public.asc et on le transmet dans le formulaire de demande
 ```
 Il faudra ensuite attendre quelques minutes puis actualiser la page pour voir le liens a la VM demander
