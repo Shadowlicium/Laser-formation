@@ -27,5 +27,9 @@ packages:
   - git
   - htop
   - avahi-daemon
+
+mounts:
+  - [ "${NFS_SERVER}:/srv/nfs/users/${USERNAME}", "/mnt/data/${USERNAME}", "nfs", "defaults,_netdev", "0", "0" ]
+
 runcmd:
   - systemctl reboot
