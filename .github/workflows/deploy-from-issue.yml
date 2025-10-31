@@ -240,7 +240,7 @@ jobs:
             ```bash
             gpg --decrypt id_ed25519.asc > id_ed25519
             chmod 600 id_ed25519
-            ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@<IP_VM>   # (MAC: ${{ steps.mac.outputs.MAC }})
+            ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@${{ steps.mac.outputs.MAC }}
             ```
 
       - name: Remove snippet from Proxmox
