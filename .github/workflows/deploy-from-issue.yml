@@ -229,17 +229,18 @@ jobs:
             ```json
             ${{ steps.vmout.outputs.VM_JSON }}
             ```
-            **Adresse MAC détectée :** `${{ steps.mac.outputs.MAC }}`
+            **Adresse MAC de la VM :** `${{ steps.mac.outputs.MAC }}`
 
             **Clé privée SSH chiffrée (PGP)** — copie ce bloc dans `id_ed25519.asc` puis déchiffre-la :
             ```text
             ${{ steps.load.outputs.ARMOR }}
             ```
-            **Déchiffrement :**
+
+            **Connexion SSH :**
             ```bash
             gpg --decrypt id_ed25519.asc > id_ed25519
             chmod 600 id_ed25519
-            ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@<IP_VM>
+            ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@<IP_VM>   # (MAC: ${{ steps.mac.outputs.MAC }})
             ```
 
       - name: Remove snippet from Proxmox
