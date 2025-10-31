@@ -12,17 +12,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - uses: actions/checkShadowlicium
-/
-Laser-formation
-￼
-￼
-￼
-￼
-￼
-Cout@v4
+      - uses: actions/checkout@v4
 
       - name: Install deps (jq, gpg, openssh)
         shell: bash
