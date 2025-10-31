@@ -168,54 +168,16 @@ jobs:
       - name: Load armored key content for comment
         id: load
         shell: bash
-        env:
-          PVE_HOST:     ${{ secrets.PVE_HOST }}
-          PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
-          PVE_SSH_KEY:  ${{ secrets.PVE_SSH_KEY }}
-          PVE_SSH_PORT: ${{ secrets.PVE_SSH_PORT }} # ex: 32222
         run: |
           set -euo pipefail
-
-          VM_JSON_FILE="/tmp/vm_info.json"
-          if [ ! -f "$VM_JSON_FILE" ]; then            # MAC: ${{ steps.mac.outputs.MAC }}
-            echo "❌ /tmp/vm_info.json introuvable"
-            exit 0
+          FILE="${{ steps.pgp.outputs.ARMOR_PATH }}"
+          if [ ! -f "$FILE" ]; then
+            echo "Fichier chiffré introuvable: $FILE" >&2
+            exit 1
           fi
-
-          VMID="$(jq -r 'to_entries[0].value.vmid // empty' "$VM_JSON_FILE")"
-          NODE="$(jq -r 'to_entries[0].value.node // empty' "$VM_JSON_FILE")"
-          if [ -z "$VMID" ] || [ "$VMID" = "null" ]; then
-            echo "❌ VMID manquant dans les outputs"
-            exit 0
-          fi
-
-          # Prépare clé/known_hosts
-          echo "${PVE_SSH_KEY}" > /tmp/pve_key.pem
-          chmod 600 /tmp/pve_key.pem
-          PORT="${PVE_SSH_PORT:-32222}"
-          mkdir -p ~/.ssh
-          ssh-keyscan -p "$PORT" "$PVE_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-
-          # Si le node n'est pas renseigné par Terraform, on le déduit
-          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
-            echo "ℹ️ Node absent → détection via /cluster/resources…"
-            RESP_NODE="$(ssh -p "$PORT" -i /tmp/pve_key.pem -o StrictHostKeyChecking=yes \
-              "${PVE_SSH_USER}@${PVE_HOST}" \
-              "sudo pvesh get /cluster/resources --type vm" || true)"
-            NODE="$(printf '%s' "$RESP_NODE" | grep -oE '\"vmid\":\s*'${VMID}',[^}]+' | grep -oE '\"node\":\"[^"]+\"' | cut -d: -f2 | tr -d '\"')"
-          fi
-
-          if [ -z "${NODE:-}" ] || [ "$NODE" = "null" ]; then
-            echo "❌ Impossible d’identifier le node de la VM $VMID"
-            exit 0
-          fi
-
-          echo "🔍 VMID=$VMID  NODE=$NODE"
-
-          ARMOR_CONTENT=$(sed -e 's/`/\\`/g' "$FILE")
           {
             echo "ARMOR<<EOF"
-            printf '%s\n' "$ARMOR_CONTENT"
+            cat "$FILE"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
