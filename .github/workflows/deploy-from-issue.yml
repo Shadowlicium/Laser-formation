@@ -164,6 +164,43 @@ jobs:
           else
             echo "VM_JSON={}" >> "$GITHUB_OUTPUT"
           fi
+          
+      - name: Retrieve MAC address
+        id: mac
+        shell: bash
+        env:
+          PVE_API_URL: ${{ secrets.PVE_API_URL }}
+          PVE_TOKEN_ID: ${{ secrets.PVE_TOKEN_ID }}
+          PVE_TLS_INSECURE: ${{ secrets.PVE_TLS_INSECURE }}
+        run: |
+          set -euo pipefail
+          VM_JSON_FILE="/tmp/vm_info.json"
+
+          # Récupération du VMID et du node depuis les outputs tofu
+          VMID=$(jq -r 'to_entries[0].value.vmid' "$VM_JSON_FILE")
+          NODE=$(jq -r 'to_entries[0].value.node' "$VM_JSON_FILE")
+
+          if [ -z "$VMID" ] || [ "$VMID" == "null" ]; then
+            echo "⚠️ VMID introuvable dans les outputs."
+            echo "MAC=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "🔍 Récupération de la MAC pour VMID=$VMID sur le node=$NODE..."
+
+          RESPONSE=$(curl -sk \
+            -H "Authorization: PVEAPIToken=${PVE_TOKEN_ID}" \
+            "${PVE_API_URL}/nodes/${NODE}/qemu/${VMID}/config")
+
+          MAC=$(jq -r '.data.net0' <<< "$RESPONSE" | sed -E 's/.*=([0-9A-Fa-f:]+),.*/\1/')
+          if [[ "$MAC" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+            echo "✅ MAC détectée : $MAC"
+            echo "MAC=$MAC" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ MAC introuvable ou invalide."
+            echo "MAC=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
 
       - name: Load armored key content for comment
         id: load
