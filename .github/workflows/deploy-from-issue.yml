@@ -98,6 +98,8 @@ jobs:
           PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
           PVE_SSH_KEY: ${{ secrets.PVE_SSH_KEY }}
           PVE_SSH_PORT: ${{ secrets.PVE_SSH_PORT }}
+          NFS_SERVER: ${{ secrets.NFS_SERVER }}
+          NFS_EXPORT: ${{ secrets.NFS_EXPORT }}
         run: |
           set -euo pipefail
           USERNAME="${{ steps.parse.outputs.NOM }}"
@@ -113,8 +115,8 @@ jobs:
           mkdir -p ~/.ssh
 
           echo "Generation du snippet a partir du template..."
-          export USERNAME PUBKEY
-          envsubst '${USERNAME} ${PUBKEY}' < "$TEMPLATE" > "$CLOUD_FILE"
+          export USERNAME PUBKEY NFS_SERVER NFS_EXPORT
+          envsubst '${USERNAME} ${PUBKEY} ${NFS_SERVER} ${NFS_EXPORT}' < "$TEMPLATE" > "$CLOUD_FILE"
 
           echo "${PVE_SSH_KEY}" > /tmp/key.pem
           chmod 600 /tmp/key.pem
