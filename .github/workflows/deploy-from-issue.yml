@@ -165,7 +165,14 @@ jobs:
             echo "VM_JSON={}" >> "$GITHUB_OUTPUT"
           fi
           
-      - name: Retrieve MAC address via SSH (pvesh)
+      - name: Load armored key content for comment
+        id: load
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="${{ steps.pgp.outputs.ARMOR_PATH }}"
+          if [ ! -f "$FILE" ]; then
+            echo "Fichier chiffre introuvable: $FILE" >&2      - name: Retrieve MAC address via SSH (pvesh)
         id: mac
         shell: bash
         env:
@@ -230,14 +237,6 @@ jobs:
             echo "MAC=unknown" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Load armored key content for comment
-        id: load
-        shell: bash
-        run: |
-          set -euo pipefail
-          FILE="${{ steps.pgp.outputs.ARMOR_PATH }}"
-          if [ ! -f "$FILE" ]; then
-            echo "Fichier chiffre introuvable: $FILE" >&2
             exit 1
           fi
           ARMOR_CONTENT=$(sed -e 's/`/\\`/g' "$FILE")
@@ -257,8 +256,6 @@ jobs:
             ```json
             ${{ steps.vmout.outputs.VM_JSON }}
             ```
-            **Adresse MAC de la VM :** `${{ steps.mac.outputs.MAC }}`
-
             **Clé privée SSH chiffrée (PGP)** — copie ce bloc dans `id_ed25519.asc` puis déchiffre-la :
             ```text
             ${{ steps.load.outputs.ARMOR }}
@@ -269,7 +266,7 @@ jobs:
             gpg --decrypt id_ed25519.asc > id_ed25519
             chmod 600 id_ed25519
             # MAC: ${{ steps.mac.outputs.MAC }}
-            ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@${{ steps.mac.outputs.MAC }}
+            ssh -i ./id_ed25519 ${{ steps.parse.outputs.NOM }}@debian-${{ steps.parse.outputs.NOM }}
             ```
 
       - name: Remove snippet from Proxmox
