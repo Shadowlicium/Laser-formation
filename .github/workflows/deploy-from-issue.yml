@@ -224,11 +224,13 @@ jobs:
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            VM créée pour `${{ steps.parse.outputs.NOM }}`
+            ✅ **VM créée pour** `${{ steps.parse.outputs.NOM }}`
             **Infos VM (outputs)** :
             ```json
             ${{ steps.vmout.outputs.VM_JSON }}
             ```
+            **Adresse MAC détectée :** `${{ steps.mac.outputs.MAC }}`
+
             **Clé privée SSH chiffrée (PGP)** — copie ce bloc dans `id_ed25519.asc` puis déchiffre-la :
             ```text
             ${{ steps.load.outputs.ARMOR }}
