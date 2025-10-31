@@ -168,9 +168,6 @@ jobs:
       - name: Load armored key content for comment
         id: load
         shell: bash
-        run: |
-          set -euo pipefail
-        shell: bash
         env:
           PVE_HOST:     ${{ secrets.PVE_HOST }}
           PVE_SSH_USER: ${{ secrets.PVE_SSH_USER }}
