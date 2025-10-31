@@ -28,8 +28,13 @@ packages:
   - htop
   - avahi-daemon
 
+runcmd:
+  - mkdir -p /home/${USERNAME}/data
+  - chown ${USERNAME}:${USERNAME} /home/${USERNAME}/data
+  - systemctl daemon-reload
+
 mounts:
-  - [ "${NFS_SERVER}:/srv/nfs/users/${USERNAME}", "/mnt/data/${USERNAME}", "nfs", "defaults,_netdev", "0", "0" ]
+  - [ "${NFS_SERVER}:${NFS_EXPORT}/${USERNAME}", "/home/${USERNAME}/data", "nfs", "nfsvers=4.2,rw,_netdev,x-systemd.automount,noatime", "0", "0" ]
 
 runcmd:
   - systemctl reboot
