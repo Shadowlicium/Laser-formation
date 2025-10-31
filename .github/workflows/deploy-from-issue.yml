@@ -167,7 +167,7 @@ jobs:
             echo "VM_JSON={}" >> "$GITHUB_OUTPUT"
           fi
           
-      - name: Load armored key content for comment
+      - name: Load pgp key content for comment
         id: load
         shell: bash
         run: |
