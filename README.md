@@ -24,9 +24,9 @@ gpg --list-keys
 #uid           [ultimate] Shadowlicium <shadow@example.com>
 #sub   rsa4096 2025-10-28 [E]
 
-#gpg --armor --export shadowlicium > public.asc
+gpg --armor --export nom_utiliser > public.asc
 
-#cat public.asc
+cat public.asc
 
 #On copie ensuite tout le contenu de public.asc et on le transmet dans le formulaire de demande
 ```
