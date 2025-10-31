@@ -170,10 +170,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          FILE="${{ steps.pgp.outputs.ARMOR_PATH }}"
-          if [ ! -f "$FILE" ]; then
-            echo "Fichier chiffre introuvable: $FILE" >&2      - name: Retrieve MAC address via SSH (pvesh)
-        id: mac
         shell: bash
         env:
           PVE_HOST:     ${{ secrets.PVE_HOST }}
