@@ -229,12 +229,18 @@ jobs:
             ```json
             ${{ steps.vmout.outputs.VM_JSON }}
             ```
+
+            **Nom de la machine :**
+            ```bash
+            debian-${{ steps.parse.outputs.NOM }}
+            ```
+
             **Clé privée SSH chiffrée (PGP)** — copie ce bloc dans `id_ed25519.asc` puis déchiffre-la :
             ```text
             ${{ steps.load.outputs.ARMOR }}
             ```
 
-            **Connexion SSH :**
+            **Connexion SSH (exemple) :**
             ```bash
             gpg --decrypt id_ed25519.asc > id_ed25519
             chmod 600 id_ed25519
