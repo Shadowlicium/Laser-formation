@@ -1,6 +1,6 @@
 # Projet-mise-en-place-formation
 
-Le but de ce projet est de mettre en place un service Web qui permettra de déployer une instance afin de permettre la prise en main d'une machine distante pour créer plusieurs machines pour les étudiants en formations : 
+Le but de ce projet est de mettre en place un service Web (ici avec la demande de Issue) qui permettra de déployer une instance afin de permettre la prise en main d'une machine distante afin de créer plusieurs machines pour les étudiants en formations : 
 
 Le schéma de la structure pour le moment ressemblera a ça 
 
